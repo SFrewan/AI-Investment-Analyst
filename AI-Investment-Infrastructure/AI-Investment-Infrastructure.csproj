@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>AI_Investment_Infrastructure</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AI-Investment-App\AI-Investment-App.csproj" />
+    <ProjectReference Include="..\AI-Investment-Domain\AI-Investment-Domain.csproj" />
+  </ItemGroup>
+
+</Project>

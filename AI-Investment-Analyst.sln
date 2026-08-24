@@ -1,0 +1,50 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.13.35806.99 d17.13
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI-Investment-API", "AI-Investment-API\AI-Investment-API.csproj", "{B90910F3-1875-4BF0-867E-96FC10C78DBB}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Docs", "Docs", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
+	ProjectSection(SolutionItems) = preProject
+		SYSTEM_ARCHITECTURE.md = SYSTEM_ARCHITECTURE.md
+	EndProjectSection
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Prompts", "Prompts", "{F56FEFD9-C817-4F96-9C7E-81E3AD27A52A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI-Investment-Domain", "AI-Investment-Domain\AI-Investment-Domain.csproj", "{207B91D7-D821-4FD6-8C2E-892D2D3900E8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI-Investment-App", "AI-Investment-App\AI-Investment-App.csproj", "{95F597E3-7418-4648-A839-7FD12C88E83C}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI-Investment-Infrastructure", "AI-Investment-Infrastructure\AI-Investment-Infrastructure.csproj", "{716B0E0A-26BA-4D88-A33E-E2B3867EA98E}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B90910F3-1875-4BF0-867E-96FC10C78DBB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B90910F3-1875-4BF0-867E-96FC10C78DBB}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B90910F3-1875-4BF0-867E-96FC10C78DBB}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B90910F3-1875-4BF0-867E-96FC10C78DBB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{207B91D7-D821-4FD6-8C2E-892D2D3900E8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{207B91D7-D821-4FD6-8C2E-892D2D3900E8}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{207B91D7-D821-4FD6-8C2E-892D2D3900E8}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{207B91D7-D821-4FD6-8C2E-892D2D3900E8}.Release|Any CPU.Build.0 = Release|Any CPU
+		{95F597E3-7418-4648-A839-7FD12C88E83C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{95F597E3-7418-4648-A839-7FD12C88E83C}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{95F597E3-7418-4648-A839-7FD12C88E83C}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{95F597E3-7418-4648-A839-7FD12C88E83C}.Release|Any CPU.Build.0 = Release|Any CPU
+		{716B0E0A-26BA-4D88-A33E-E2B3867EA98E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{716B0E0A-26BA-4D88-A33E-E2B3867EA98E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{716B0E0A-26BA-4D88-A33E-E2B3867EA98E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{716B0E0A-26BA-4D88-A33E-E2B3867EA98E}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {3D4AFD62-D197-469B-B5F4-3D72F327E600}
+	EndGlobalSection
+EndGlobal
