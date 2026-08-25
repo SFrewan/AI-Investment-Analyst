@@ -2,6 +2,8 @@ using AI.Investment.Application.Actions;
 using AI.Investment.Application.Companies.CreateCompany;
 using AI.Investment.Application.Companies.GetCompany;
 using AI.Investment.Application.Companies.SearchCompanies;
+using AI.Investment.Application.Ingestion;
+using AI.Investment.Application.Retention;
 using AI.Investment.Domain.Actions;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -25,6 +27,13 @@ public static class DependencyInjection
 
         // The gateway is scoped: it participates in the same unit of work as the request.
         services.AddScoped<IActionGateway, ActionGateway>();
+
+        // Scoped like the action gateway they build on: each participates in one unit of work.
+        services.AddScoped<IIngestionGateway, IngestionGateway>();
+
+        // Retention deletes evidence, so it is proposed under its own capability and denied by
+        // default - a capability with no configured policy never executes.
+        services.AddScoped<IRetentionEnforcer, RetentionEnforcer>();
 
         services.AddScoped<CreateCompanyHandler>();
         services.AddScoped<GetCompanyHandler>();

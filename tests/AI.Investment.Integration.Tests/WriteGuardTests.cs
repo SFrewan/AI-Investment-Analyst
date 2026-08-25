@@ -141,6 +141,77 @@ public sealed class WriteGuardTests
     }
 
     /// <summary>
+    /// The same rule, on the path that actually matters: inside an open authorisation window.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The two tests above open no window, so they exercise the guard's unauthorised branch. That
+    /// left the important case untested. An authorisation window is open for the whole duration of
+    /// an action's effect, which means the code best placed to rewrite the record of what it just
+    /// did is the code running inside the window - and the guard used to return early for exactly
+    /// that code.
+    /// </para>
+    /// <para>
+    /// Authorisation permits an effect. It does not permit editing the history of that effect.
+    /// These two tests are what hold that distinction in place.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task An_audit_record_cannot_be_modified_even_inside_an_authorisation_window()
+    {
+        if (!Skip()) { return; }
+
+        var authorization = new ScopedWriteAuthorization();
+        await using var context = _fixture.CreateContext(authorization);
+
+        var proposal = NewProposal();
+        var decision = PolicyDecision.Deny(proposal, "refused for the test", ["test@1"], Now);
+        await new Infrastructure.Auditing.EfAuditSink(context)
+            .RecordAsync(AuditRecord.ForPolicyDecision(proposal, decision, Now));
+
+        var tracked = await context.AuditRecords.FirstAsync(a => a.ProposalId == proposal.ProposalId);
+
+        using (authorization.Authorize(ExecuteDecision()))
+        {
+            context.Entry(tracked).State = EntityState.Modified;
+
+            var exception = await Assert.ThrowsAsync<UnauthorizedWriteException>(
+                () => context.SaveChangesAsync());
+
+            Assert.Contains("append-only", exception.Message, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task An_execution_record_cannot_be_deleted_even_inside_an_authorisation_window()
+    {
+        if (!Skip()) { return; }
+
+        var authorization = new ScopedWriteAuthorization();
+        await using var context = _fixture.CreateContext(authorization);
+
+        var proposal = NewProposal();
+        var decision = PolicyDecision.Execute(proposal, "permitted for the test", ["test@1"], Now);
+        var execution = ActionExecution.Start(proposal, decision, Now);
+        execution.MarkSucceeded(Now);
+
+        await new EfActionExecutionStore(context).RecordAsync(execution);
+
+        var tracked = await context.ActionExecutions
+            .FirstAsync(e => e.ExecutionId == execution.ExecutionId);
+
+        using (authorization.Authorize(decision))
+        {
+            context.ActionExecutions.Remove(tracked);
+
+            var exception = await Assert.ThrowsAsync<UnauthorizedWriteException>(
+                () => context.SaveChangesAsync());
+
+            Assert.Contains("append-only", exception.Message, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
     /// The database, not the application, is what makes deduplication correct under the
     /// concurrency that retries create.
     /// </summary>

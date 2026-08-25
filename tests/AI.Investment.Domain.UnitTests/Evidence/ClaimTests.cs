@@ -12,11 +12,19 @@ public sealed class ClaimTests
     private static readonly DateTime Published = new(2026, 3, 1, 0, 0, 0, DateTimeKind.Utc);
     private static readonly DateTime Retrieved = new(2026, 3, 2, 0, 0, 0, DateTimeKind.Utc);
 
+    // Origin and locator are separate: "sec-edgar" is the registered source, the accession
+    // number is the record within it. Before Phase 2 stage 2 both lived in one string, which
+    // meant the origin could not be looked up in the registry.
     private static Provenance FilingProvenance() =>
-        Provenance.Create("sec-edgar:0000320193-26-000001", AsOf, Published, Retrieved);
+        Provenance.Create(
+            "sec-edgar",
+            AsOf,
+            Published,
+            Retrieved,
+            sourceRecordId: "0000320193-26-000001");
 
     private static Provenance SystemProvenance() =>
-        Provenance.FromSystem("service:test", AsOf, Retrieved);
+        Provenance.FromSystem("internal.test-service", AsOf, Retrieved);
 
     [Fact]
     public void A_fact_carries_provenance_and_no_confidence()

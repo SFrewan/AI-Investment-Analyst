@@ -2,6 +2,9 @@ using AI.Investment.Application.Abstractions;
 using AI.Investment.Domain.Actions;
 using AI.Investment.Domain.Auditing;
 using AI.Investment.Domain.Companies;
+using AI.Investment.Domain.Ingestion;
+using AI.Investment.Domain.Retention;
+using AI.Investment.Domain.Sources;
 using Microsoft.EntityFrameworkCore;
 
 namespace AI.Investment.Infrastructure.Persistence;
@@ -19,11 +22,17 @@ namespace AI.Investment.Infrastructure.Persistence;
 /// naming the rule they broke.
 /// </para>
 /// <para>
-/// Three entity types are exempt: <see cref="AuditRecord"/>, <see cref="ActionExecution"/> and
-/// <see cref="ProcessedAction"/>. They are the seam's own bookkeeping - the record of what was
-/// decided, what was attempted and which keys are claimed - and they must be writable precisely
-/// when nothing is authorised, because that is the situation a denial creates. All three are
-/// append-only, so exempting them grants no ability to change domain state.
+/// Four entity types are exempt: <see cref="AuditRecord"/>, <see cref="ActionExecution"/>,
+/// <see cref="ProcessedAction"/> and <see cref="IngestionRun"/>. They are the platform's own
+/// bookkeeping - the record of what was decided, what was attempted, which keys are claimed and
+/// which retrievals were made or refused - and they must be writable precisely when nothing is
+/// authorised, because that is the situation a denial creates. All four are append-only, so
+/// exempting them grants no ability to change domain state.
+/// </para>
+/// <para>
+/// <see cref="DataSource"/> and <see cref="IngestionRun"/> joined the model in the persistence
+/// stage. Only the latter is exempt: the registry is ordinary domain state, so registering or
+/// activating a source is a side effect that must pass through the seam like any other.
 /// </para>
 /// </remarks>
 public sealed class AppDbContext : DbContext
@@ -44,6 +53,15 @@ public sealed class AppDbContext : DbContext
     public DbSet<ActionExecution> ActionExecutions => Set<ActionExecution>();
 
     public DbSet<ProcessedAction> ProcessedActions => Set<ProcessedAction>();
+
+    /// <summary>The source registry: where information may come from and on what terms.</summary>
+    public DbSet<DataSource> DataSources => Set<DataSource>();
+
+    /// <summary>The append-only ingestion ledger, including refusals.</summary>
+    public DbSet<IngestionRun> IngestionRuns => Set<IngestionRun>();
+
+    /// <summary>Payloads deleted under a source's licence, and why.</summary>
+    public DbSet<UnreplayableEvidence> UnreplayableEvidence => Set<UnreplayableEvidence>();
 
     /// <summary>
     /// Commits domain changes. Throws <see cref="UnauthorizedWriteException"/> unless the
@@ -96,30 +114,19 @@ public sealed class AppDbContext : DbContext
 
     private void GuardWrites()
     {
-        if (_writeAuthorization.IsAuthorized)
-        {
-            return;
-        }
-
         ChangeTracker.DetectChanges();
 
-        var unauthorised = ChangeTracker
-            .Entries()
-            .Where(e => e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted)
-            .Where(e => !IsSeamBookkeeping(e.Entity))
-            .Select(e => $"{e.Entity.GetType().Name}:{e.State}")
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
-
-        if (unauthorised.Count > 0)
-        {
-            throw new UnauthorizedWriteException(
-                $"Pending changes without an authorised execution: {string.Join(", ", unauthorised)}.");
-        }
-
+        // FIRST, and deliberately ahead of the authorisation check below.
+        //
         // A modification or deletion of seam bookkeeping is never legitimate, authorised or not.
         // These tables are append-only by design; permitting an update here would make the audit
         // trail rewritable, which is the one thing it must never be.
+        //
+        // This check previously sat AFTER the "already authorised, nothing to check" early return,
+        // which meant it could never run on the path that matters. An authorisation window is open
+        // for the whole duration of an action's effect, so the code most able to rewrite the record
+        // of what it just did was the code exempted from being stopped. Authorisation permits an
+        // effect; it does not permit editing the history of that effect.
         var mutatedBookkeeping = ChangeTracker
             .Entries()
             .Where(e => e.State is EntityState.Modified or EntityState.Deleted)
@@ -135,7 +142,30 @@ public sealed class AppDbContext : DbContext
                 $"deleted. Attempted: {string.Join(", ", mutatedBookkeeping)}.");
         }
 
-        if (!_internalWrite && ChangeTracker.Entries().Any(e => e.State == EntityState.Added))
+        if (_writeAuthorization.IsAuthorized)
+        {
+            return;
+        }
+
+        var unauthorised = ChangeTracker
+            .Entries()
+            .Where(e => e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted)
+            .Where(e => !IsSeamBookkeeping(e.Entity))
+            .Select(e => $"{e.Entity.GetType().Name}:{e.State}")
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (unauthorised.Count > 0)
+        {
+            throw new UnauthorizedWriteException(
+                $"Pending changes without an authorised execution: {string.Join(", ", unauthorised)}.");
+        }
+
+        // The IsSeamBookkeeping filter is redundant today - the check above has already rejected
+        // every other Added entity - but stating it makes this rule independent of that ordering
+        // rather than silently correct because of it.
+        if (!_internalWrite &&
+            ChangeTracker.Entries().Any(e => e.State == EntityState.Added && IsSeamBookkeeping(e.Entity)))
         {
             // Reached when application code adds an exempt entity directly and calls the public
             // SaveChangesAsync. Audit and execution records must go through their stores so the
@@ -146,6 +176,16 @@ public sealed class AppDbContext : DbContext
         }
     }
 
+    /// <summary>
+    /// The append-only ledgers, exempt from the authorisation requirement and protected from
+    /// modification.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="IngestionRun"/> belongs here for the same reason <see cref="AuditRecord"/> does:
+    /// a refused run must be recordable precisely when nothing is authorised, because refusal is
+    /// the situation in which no authorisation exists. Without the exemption, the platform
+    /// declining to ingest something would be unable to write down that it had declined.
+    /// </remarks>
     private static bool IsSeamBookkeeping(object entity) =>
-        entity is AuditRecord or ActionExecution or ProcessedAction;
+        entity is AuditRecord or ActionExecution or ProcessedAction or IngestionRun;
 }

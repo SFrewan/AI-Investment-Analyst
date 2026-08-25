@@ -33,4 +33,23 @@ public enum Capability
 
     /// <summary>Moving real money. Refused unconditionally until the execution plane exists.</summary>
     FinancialExecution = 7,
+
+    /// <summary>
+    /// Deleting archived evidence because a source's licence requires it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Its own capability because it is the one routine operation in this platform that destroys
+    /// evidence. Routing it through the seam means a deletion is proposed, policy-evaluated,
+    /// executed and audited like any other side effect - and, because a capability with no
+    /// configured policy is denied, an installation that has not deliberately enabled retention
+    /// enforcement deletes nothing at all.
+    /// </para>
+    /// <para>
+    /// Distinct from <see cref="DataIngestion"/> on purpose. Permission to fetch data is not
+    /// permission to destroy it, and a single capability covering both would grant the second
+    /// every time someone wanted the first.
+    /// </para>
+    /// </remarks>
+    DataRetention = 8,
 }

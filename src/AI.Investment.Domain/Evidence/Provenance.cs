@@ -1,4 +1,5 @@
 using AI.Investment.Domain.Exceptions;
+using AI.Investment.Domain.Sources;
 using AI.Investment.Domain.ValueObjects;
 
 namespace AI.Investment.Domain.Evidence;
@@ -33,19 +34,41 @@ namespace AI.Investment.Domain.Evidence;
 /// for <see cref="Enums.ClaimKind.Fact"/>. A prediction legitimately has an
 /// <see cref="AsOfUtc"/> in the future, which would fail any ordering rule imposed here.
 /// </para>
+/// <para>
+/// <strong>Origin and locator are separate</strong> (Phase 2 stage 2). <see cref="SourceId"/>
+/// names a <em>registered</em> source - <c>sec-edgar</c> - and is the key into the source
+/// registry, where authority, licensing and cadence live. <see cref="SourceRecordId"/> is the
+/// locator <em>within</em> that source - a filing accession number, an article identifier, a
+/// vendor's row id. Before this split both lived in one free-form string, which meant
+/// <c>"sec-edgar:0000320193-26-000001"</c> could not be looked up in the registry, and two
+/// claims from the same source did not compare equal on their origin.
+/// </para>
 /// </remarks>
 public sealed record Provenance
 {
-    public const int MaxSourceIdLength = 200;
+    /// <summary>
+    /// Upper bound on <see cref="SourceRecordId"/>. Filing accession numbers, article GUIDs and
+    /// vendor row identifiers all sit far below this; it exists to bound the column, not to
+    /// express a rule.
+    /// </summary>
+    /// <remarks>
+    /// This constant used to bound the whole source identifier at 200 characters. That
+    /// responsibility moved to <see cref="Sources.SourceId"/>, which enforces a 64-character
+    /// slug with a restricted character set, so the registry key is now a checkable identity
+    /// rather than arbitrary text.
+    /// </remarks>
+    public const int MaxSourceRecordIdLength = 200;
 
     private Provenance(
-        string sourceId,
+        SourceId sourceId,
+        string? sourceRecordId,
         Uri? sourceUrl,
         DateTime asOfUtc,
         DateTime publishedAtUtc,
         DateTime retrievedAtUtc)
     {
         SourceId = sourceId;
+        SourceRecordId = sourceRecordId;
         SourceUrl = sourceUrl;
         AsOfUtc = asOfUtc;
         PublishedAtUtc = publishedAtUtc;
@@ -53,10 +76,15 @@ public sealed record Provenance
     }
 
     /// <summary>
-    /// Stable identifier of the origin: a provider name, a filing accession number, an article
-    /// identifier, or - for values the system itself produced - an agent or service identifier.
+    /// The registered origin. A key into the source registry, not free text.
     /// </summary>
-    public string SourceId { get; }
+    public SourceId SourceId { get; }
+
+    /// <summary>
+    /// The locator within that source - filing accession number, article identifier, vendor row
+    /// id - when the source has a meaningful one. Null when it does not.
+    /// </summary>
+    public string? SourceRecordId { get; }
 
     /// <summary>Where a human can go to check it, when such a place exists.</summary>
     public Uri? SourceUrl { get; }
@@ -71,39 +99,88 @@ public sealed record Provenance
     public DateTime RetrievedAtUtc { get; }
 
     public static Provenance Create(
-        string sourceId,
+        SourceId sourceId,
         DateTime asOfUtc,
         DateTime publishedAtUtc,
         DateTime retrievedAtUtc,
+        string? sourceRecordId = null,
         Uri? sourceUrl = null)
     {
-        if (string.IsNullOrWhiteSpace(sourceId))
-        {
-            throw new DomainValidationException(
-                nameof(sourceId),
-                "Provenance requires a source identifier. A value with no stated origin cannot be audited.");
-        }
-
-        var trimmedSourceId = sourceId.Trim();
-
-        if (trimmedSourceId.Length > MaxSourceIdLength)
-        {
-            throw new DomainValidationException(
-                nameof(sourceId),
-                $"A source identifier may not exceed {MaxSourceIdLength} characters.");
-        }
+        ArgumentNullException.ThrowIfNull(sourceId);
 
         DateRange.EnsureUtc(asOfUtc, nameof(asOfUtc));
         DateRange.EnsureUtc(publishedAtUtc, nameof(publishedAtUtc));
         DateRange.EnsureUtc(retrievedAtUtc, nameof(retrievedAtUtc));
 
-        return new Provenance(trimmedSourceId, sourceUrl, asOfUtc, publishedAtUtc, retrievedAtUtc);
+        return new Provenance(
+            sourceId,
+            NormaliseRecordId(sourceRecordId),
+            sourceUrl,
+            asOfUtc,
+            publishedAtUtc,
+            retrievedAtUtc);
     }
+
+    /// <summary>
+    /// Convenience overload that parses the source identifier.
+    /// </summary>
+    /// <remarks>
+    /// Delegates to <see cref="Sources.SourceId.Create"/>, so an identifier that the registry
+    /// could never hold is rejected here rather than becoming an unresolvable origin. A value
+    /// with no stated origin cannot be audited; a value whose stated origin cannot be looked up
+    /// is barely better.
+    /// </remarks>
+    public static Provenance Create(
+        string sourceId,
+        DateTime asOfUtc,
+        DateTime publishedAtUtc,
+        DateTime retrievedAtUtc,
+        string? sourceRecordId = null,
+        Uri? sourceUrl = null) =>
+        Create(
+            Sources.SourceId.Create(sourceId),
+            asOfUtc,
+            publishedAtUtc,
+            retrievedAtUtc,
+            sourceRecordId,
+            sourceUrl);
 
     /// <summary>
     /// Provenance for a value this system produced itself - a calculation, an interpretation or
     /// a prediction - rather than observed from outside.
     /// </summary>
+    /// <remarks>
+    /// The producer is still a <see cref="Sources.SourceId"/>, and is expected to be registered
+    /// like any other origin (see <see cref="SourceType.InternalDerivation"/>). An AI
+    /// interpretation whose producer cannot be identified is exactly the kind of value that
+    /// later becomes impossible to explain.
+    /// </remarks>
+    public static Provenance FromSystem(SourceId producerId, DateTime asOfUtc, DateTime producedAtUtc) =>
+        Create(producerId, asOfUtc, producedAtUtc, producedAtUtc);
+
+    /// <inheritdoc cref="FromSystem(SourceId, DateTime, DateTime)"/>
     public static Provenance FromSystem(string producerId, DateTime asOfUtc, DateTime producedAtUtc) =>
         Create(producerId, asOfUtc, producedAtUtc, producedAtUtc);
+
+    public override string ToString() =>
+        SourceRecordId is null ? SourceId.Value : $"{SourceId.Value}/{SourceRecordId}";
+
+    private static string? NormaliseRecordId(string? sourceRecordId)
+    {
+        if (string.IsNullOrWhiteSpace(sourceRecordId))
+        {
+            return null;
+        }
+
+        var trimmed = sourceRecordId.Trim();
+
+        if (trimmed.Length > MaxSourceRecordIdLength)
+        {
+            throw new DomainValidationException(
+                nameof(sourceRecordId),
+                $"A source record identifier may not exceed {MaxSourceRecordIdLength} characters.");
+        }
+
+        return trimmed;
+    }
 }
