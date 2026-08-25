@@ -3,20 +3,54 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.13.35806.99 d17.13
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI-Investment-API", "AI-Investment-API\AI-Investment-API.csproj", "{B90910F3-1875-4BF0-867E-96FC10C78DBB}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{6D69538D-0440-5330-BA44-76237A4E1E60}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Docs", "Docs", "{02EA681E-C7D8-13C7-8484-4AC65E1B71E8}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{322594AD-BEA1-577F-B36F-65A2A7C14AD8}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{AB7FE6A3-B79F-5018-9713-0DBEF6145A97}"
 	ProjectSection(SolutionItems) = preProject
-		SYSTEM_ARCHITECTURE.md = SYSTEM_ARCHITECTURE.md
+		docs\SYSTEM_ARCHITECTURE.md = docs\SYSTEM_ARCHITECTURE.md
+		docs\AUDIT_AND_TARGET_ARCHITECTURE.md = docs\AUDIT_AND_TARGET_ARCHITECTURE.md
+		docs\PHASE0_AUTONOMOUS_PLATFORM_ARCHITECTURE.md = docs\PHASE0_AUTONOMOUS_PLATFORM_ARCHITECTURE.md
+		docs\SECURITY.md = docs\SECURITY.md
+		docs\decisions\0001-phase0-phase1-approved-decisions.md = docs\decisions\0001-phase0-phase1-approved-decisions.md
 	EndProjectSection
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Prompts", "Prompts", "{F56FEFD9-C817-4F96-9C7E-81E3AD27A52A}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "prompts", "prompts", "{2DFD2C31-DB76-5AFF-9EB2-FB80F63FD519}"
+	ProjectSection(SolutionItems) = preProject
+		prompts\README.md = prompts\README.md
+	EndProjectSection
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI-Investment-Domain", "AI-Investment-Domain\AI-Investment-Domain.csproj", "{207B91D7-D821-4FD6-8C2E-892D2D3900E8}"
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{F5EFA073-9CD8-56B9-93F3-0AD2AD9C994F}"
+	ProjectSection(SolutionItems) = preProject
+		.editorconfig = .editorconfig
+		.gitignore = .gitignore
+		Directory.Build.props = Directory.Build.props
+		Directory.Packages.props = Directory.Packages.props
+		global.json = global.json
+		NuGet.config = NuGet.config
+		.github\workflows\ci.yml = .github\workflows\ci.yml
+	EndProjectSection
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI-Investment-App", "AI-Investment-App\AI-Investment-App.csproj", "{95F597E3-7418-4648-A839-7FD12C88E83C}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI.Investment.Domain", "src\AI.Investment.Domain\AI.Investment.Domain.csproj", "{C1D5D51F-2A82-56DF-A10B-2CD01822514A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI-Investment-Infrastructure", "AI-Investment-Infrastructure\AI-Investment-Infrastructure.csproj", "{716B0E0A-26BA-4D88-A33E-E2B3867EA98E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI.Investment.Application", "src\AI.Investment.Application\AI.Investment.Application.csproj", "{242EAD02-CCEF-543E-83D0-86977DED1E69}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI.Investment.Infrastructure", "src\AI.Investment.Infrastructure\AI.Investment.Infrastructure.csproj", "{B4A330E4-36F4-5023-BFC5-74735541CC1B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI.Investment.Api", "src\AI.Investment.Api\AI.Investment.Api.csproj", "{55696362-E7FD-59C9-997C-0B6406BE09A1}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI.Investment.Domain.UnitTests", "tests\AI.Investment.Domain.UnitTests\AI.Investment.Domain.UnitTests.csproj", "{5B309B88-0173-55FF-9E1B-8A972FFEE718}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI.Investment.Application.UnitTests", "tests\AI.Investment.Application.UnitTests\AI.Investment.Application.UnitTests.csproj", "{42E85132-A2C6-55CF-9F1F-16422744F119}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI.Investment.Safety.Tests", "tests\AI.Investment.Safety.Tests\AI.Investment.Safety.Tests.csproj", "{0AEEBBE0-E0FB-5B7B-9289-EA23D112C1CC}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI.Investment.Architecture.Tests", "tests\AI.Investment.Architecture.Tests\AI.Investment.Architecture.Tests.csproj", "{08F11D04-E99E-55A3-900D-B4BE5FC87216}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI.Investment.Integration.Tests", "tests\AI.Investment.Integration.Tests\AI.Investment.Integration.Tests.csproj", "{D590BA04-BF5F-5E30-90E2-FFA223AAE1B7}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI.Investment.Api.Tests", "tests\AI.Investment.Api.Tests\AI.Investment.Api.Tests.csproj", "{6380E67C-7D20-54CE-B558-D28A5455A188}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -24,25 +58,61 @@ Global
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{B90910F3-1875-4BF0-867E-96FC10C78DBB}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{B90910F3-1875-4BF0-867E-96FC10C78DBB}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{B90910F3-1875-4BF0-867E-96FC10C78DBB}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{B90910F3-1875-4BF0-867E-96FC10C78DBB}.Release|Any CPU.Build.0 = Release|Any CPU
-		{207B91D7-D821-4FD6-8C2E-892D2D3900E8}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{207B91D7-D821-4FD6-8C2E-892D2D3900E8}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{207B91D7-D821-4FD6-8C2E-892D2D3900E8}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{207B91D7-D821-4FD6-8C2E-892D2D3900E8}.Release|Any CPU.Build.0 = Release|Any CPU
-		{95F597E3-7418-4648-A839-7FD12C88E83C}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{95F597E3-7418-4648-A839-7FD12C88E83C}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{95F597E3-7418-4648-A839-7FD12C88E83C}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{95F597E3-7418-4648-A839-7FD12C88E83C}.Release|Any CPU.Build.0 = Release|Any CPU
-		{716B0E0A-26BA-4D88-A33E-E2B3867EA98E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{716B0E0A-26BA-4D88-A33E-E2B3867EA98E}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{716B0E0A-26BA-4D88-A33E-E2B3867EA98E}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{716B0E0A-26BA-4D88-A33E-E2B3867EA98E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C1D5D51F-2A82-56DF-A10B-2CD01822514A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C1D5D51F-2A82-56DF-A10B-2CD01822514A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C1D5D51F-2A82-56DF-A10B-2CD01822514A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C1D5D51F-2A82-56DF-A10B-2CD01822514A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{242EAD02-CCEF-543E-83D0-86977DED1E69}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{242EAD02-CCEF-543E-83D0-86977DED1E69}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{242EAD02-CCEF-543E-83D0-86977DED1E69}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{242EAD02-CCEF-543E-83D0-86977DED1E69}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B4A330E4-36F4-5023-BFC5-74735541CC1B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B4A330E4-36F4-5023-BFC5-74735541CC1B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B4A330E4-36F4-5023-BFC5-74735541CC1B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B4A330E4-36F4-5023-BFC5-74735541CC1B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{55696362-E7FD-59C9-997C-0B6406BE09A1}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{55696362-E7FD-59C9-997C-0B6406BE09A1}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{55696362-E7FD-59C9-997C-0B6406BE09A1}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{55696362-E7FD-59C9-997C-0B6406BE09A1}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5B309B88-0173-55FF-9E1B-8A972FFEE718}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5B309B88-0173-55FF-9E1B-8A972FFEE718}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5B309B88-0173-55FF-9E1B-8A972FFEE718}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5B309B88-0173-55FF-9E1B-8A972FFEE718}.Release|Any CPU.Build.0 = Release|Any CPU
+		{42E85132-A2C6-55CF-9F1F-16422744F119}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{42E85132-A2C6-55CF-9F1F-16422744F119}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{42E85132-A2C6-55CF-9F1F-16422744F119}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{42E85132-A2C6-55CF-9F1F-16422744F119}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0AEEBBE0-E0FB-5B7B-9289-EA23D112C1CC}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0AEEBBE0-E0FB-5B7B-9289-EA23D112C1CC}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0AEEBBE0-E0FB-5B7B-9289-EA23D112C1CC}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0AEEBBE0-E0FB-5B7B-9289-EA23D112C1CC}.Release|Any CPU.Build.0 = Release|Any CPU
+		{08F11D04-E99E-55A3-900D-B4BE5FC87216}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{08F11D04-E99E-55A3-900D-B4BE5FC87216}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{08F11D04-E99E-55A3-900D-B4BE5FC87216}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{08F11D04-E99E-55A3-900D-B4BE5FC87216}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D590BA04-BF5F-5E30-90E2-FFA223AAE1B7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D590BA04-BF5F-5E30-90E2-FFA223AAE1B7}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D590BA04-BF5F-5E30-90E2-FFA223AAE1B7}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D590BA04-BF5F-5E30-90E2-FFA223AAE1B7}.Release|Any CPU.Build.0 = Release|Any CPU
+		{6380E67C-7D20-54CE-B558-D28A5455A188}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{6380E67C-7D20-54CE-B558-D28A5455A188}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{6380E67C-7D20-54CE-B558-D28A5455A188}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{6380E67C-7D20-54CE-B558-D28A5455A188}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{C1D5D51F-2A82-56DF-A10B-2CD01822514A} = {6D69538D-0440-5330-BA44-76237A4E1E60}
+		{242EAD02-CCEF-543E-83D0-86977DED1E69} = {6D69538D-0440-5330-BA44-76237A4E1E60}
+		{B4A330E4-36F4-5023-BFC5-74735541CC1B} = {6D69538D-0440-5330-BA44-76237A4E1E60}
+		{55696362-E7FD-59C9-997C-0B6406BE09A1} = {6D69538D-0440-5330-BA44-76237A4E1E60}
+		{5B309B88-0173-55FF-9E1B-8A972FFEE718} = {322594AD-BEA1-577F-B36F-65A2A7C14AD8}
+		{42E85132-A2C6-55CF-9F1F-16422744F119} = {322594AD-BEA1-577F-B36F-65A2A7C14AD8}
+		{0AEEBBE0-E0FB-5B7B-9289-EA23D112C1CC} = {322594AD-BEA1-577F-B36F-65A2A7C14AD8}
+		{08F11D04-E99E-55A3-900D-B4BE5FC87216} = {322594AD-BEA1-577F-B36F-65A2A7C14AD8}
+		{D590BA04-BF5F-5E30-90E2-FFA223AAE1B7} = {322594AD-BEA1-577F-B36F-65A2A7C14AD8}
+		{6380E67C-7D20-54CE-B558-D28A5455A188} = {322594AD-BEA1-577F-B36F-65A2A7C14AD8}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {3D4AFD62-D197-469B-B5F4-3D72F327E600}

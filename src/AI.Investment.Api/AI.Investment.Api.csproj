@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>AI.Investment.Api</RootNamespace>
+    <AssemblyName>AI.Investment.Api</AssemblyName>
+
+    <!--
+      Development secrets live in the user-secrets store, never in appsettings.json.
+      See docs/SECURITY.md.
+    -->
+    <UserSecretsId>ai-investment-analyst-api-3d4afd62-d197-469b-b5f4-3d72f327e600</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Serilog" />
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Swashbuckle.AspNetCore" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AI.Investment.Application\AI.Investment.Application.csproj" />
+
+    <!--
+      COMPOSITION ONLY.
+      The API references Infrastructure so that the DI container can be wired in Program.cs.
+      No other file in this project may use a type from AI.Investment.Infrastructure -
+      enforced by tests/AI.Investment.Architecture.Tests.
+    -->
+    <ProjectReference Include="..\AI.Investment.Infrastructure\AI.Investment.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AI.Investment.Api.Tests" />
+  </ItemGroup>
+
+</Project>

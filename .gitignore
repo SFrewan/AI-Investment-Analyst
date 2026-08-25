@@ -361,3 +361,41 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+##
+## AI Investment Analyst - secret and local-override protection
+## Added in Phase 0 (audit finding F-05).
+##
+## Rationale: no secret exists in this repository yet. That is exactly why these rules are
+## added now - the first market-data or AI provider API key acquired will otherwise be pasted
+## into a tracked appsettings file and pushed. Development secrets belong in the .NET
+## user-secrets store; production secrets belong in environment variables or a managed secret
+## store. See docs/SECURITY.md.
+##
+
+# Local configuration overrides - never committed
+appsettings.Local.json
+appsettings.*.Local.json
+**/appsettings.Local.json
+**/appsettings.*.Local.json
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Common secret file shapes
+secrets.json
+*.secrets.json
+*.secret
+*.secret.*
+credentials.json
+*.pem
+*.pfx
+*.p12
+*.key
+!**/wwwroot/**/*.key
+
+# Local tooling output
+/artifacts/
+/TestResults/
+*.received.*

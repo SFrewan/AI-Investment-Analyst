@@ -1,0 +1,41 @@
+@AI_Investment_Api_HostAddress = http://localhost:5143
+
+### Liveness - is the process up?
+GET {{AI_Investment_Api_HostAddress}}/health/live
+Accept: application/json
+
+### Readiness - is PostgreSQL reachable?
+GET {{AI_Investment_Api_HostAddress}}/health/ready
+Accept: application/json
+
+### Create a company. Routed through the Action/Policy seam.
+### Expect 201 in Development, where ReferenceDataManagement is enabled at risk tier Low.
+POST {{AI_Investment_Api_HostAddress}}/api/companies
+Content-Type: application/json
+
+{
+  "name": "Microsoft Corporation",
+  "ticker": "msft",
+  "exchange": "XNAS",
+  "sector": "Technology",
+  "industry": "Software",
+  "country": "US"
+}
+
+### Repeat the same request. Expect 409: the idempotency key is already claimed.
+
+### Search by name
+GET {{AI_Investment_Api_HostAddress}}/api/companies?q=Microsoft
+Accept: application/json
+
+### Search by exact ticker
+GET {{AI_Investment_Api_HostAddress}}/api/companies?q=MSFT
+Accept: application/json
+
+### Fetch by id - replace with the id returned by the create above
+GET {{AI_Investment_Api_HostAddress}}/api/companies/00000000-0000-0000-0000-000000000000
+Accept: application/json
+
+### Kill-switch drill:
+###   set AIINV_KILL_SWITCH=1, restart, then POST again. Expect 403 and an audit row
+###   recording the denial. Unset it to resume.

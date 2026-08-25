@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>AI.Investment.Domain</RootNamespace>
+    <AssemblyName>AI.Investment.Domain</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Lets the unit tests construct a Claim<T> directly in order to prove that the invariant
+         checks fire. The public surface still routes every creation through Claims.*. -->
+    <InternalsVisibleTo Include="AI.Investment.Domain.UnitTests" />
+  </ItemGroup>
+
+  <!--
+    ARCHITECTURAL RULE: this project has NO ProjectReference and NO PackageReference.
+    The domain must not depend on the application, on infrastructure, on a persistence
+    framework, or on any external library. This is enforced by
+    tests/AI.Investment.Architecture.Tests, not by convention.
+  -->
+
+</Project>

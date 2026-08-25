@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>AI.Investment.Application</RootNamespace>
+    <AssemblyName>AI.Investment.Application</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\AI.Investment.Domain\AI.Investment.Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Registration extensions only. The application layer depends on the DI abstraction,
+         never on a container implementation. -->
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AI.Investment.Application.UnitTests" />
+    <InternalsVisibleTo Include="AI.Investment.Safety.Tests" />
+  </ItemGroup>
+
+</Project>

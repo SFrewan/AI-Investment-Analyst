@@ -1,0 +1,104 @@
+using AI.Investment.Domain.Enums;
+using AI.Investment.Domain.Exceptions;
+
+namespace AI.Investment.Domain.Actions;
+
+/// <summary>
+/// Everything the policy engine is allowed to consider, gathered before evaluation.
+/// </summary>
+/// <remarks>
+/// <para>
+/// The context is assembled by the caller and passed in, rather than the engine reaching out to
+/// read configuration or a database. That is what keeps <see cref="PolicyEngine"/> pure and
+/// therefore exhaustively testable: given the same context and proposal it always returns the
+/// same decision, with no I/O and no clock.
+/// </para>
+/// <para>
+/// <see cref="FailClosed"/> is the value to use when the context cannot be determined. It leaves
+/// the kill switch <see cref="KillSwitchState.Unknown"/> and defines no capabilities, so every
+/// proposal is denied. A system that cannot tell whether it is allowed to act must not act.
+/// </para>
+/// </remarks>
+public sealed class PolicyContext
+{
+    public const int MaxEnvironmentNameLength = 60;
+
+    private readonly Dictionary<Capability, CapabilityPolicy> _capabilities;
+
+    private PolicyContext(
+        string environmentName,
+        KillSwitchState killSwitch,
+        Dictionary<Capability, CapabilityPolicy> capabilities)
+    {
+        EnvironmentName = environmentName;
+        KillSwitch = killSwitch;
+        _capabilities = capabilities;
+    }
+
+    /// <summary>
+    /// The environment these policies apply to. A permission granted in Development carries no
+    /// weight in Production, so the environment is part of the policy identity rather than an
+    /// ambient assumption.
+    /// </summary>
+    public string EnvironmentName { get; }
+
+    public KillSwitchState KillSwitch { get; }
+
+    public IReadOnlyDictionary<Capability, CapabilityPolicy> Capabilities => _capabilities;
+
+    public static PolicyContext Create(
+        string environmentName,
+        KillSwitchState killSwitch,
+        IEnumerable<CapabilityPolicy> capabilities)
+    {
+        if (string.IsNullOrWhiteSpace(environmentName))
+        {
+            throw new DomainValidationException(nameof(environmentName), "An environment name is required.");
+        }
+
+        var trimmed = environmentName.Trim();
+
+        if (trimmed.Length > MaxEnvironmentNameLength)
+        {
+            throw new DomainValidationException(
+                nameof(environmentName),
+                $"An environment name may not exceed {MaxEnvironmentNameLength} characters.");
+        }
+
+        if (!Enum.IsDefined(killSwitch))
+        {
+            // An unrecognised state is treated as Unknown, which denies. Fail closed.
+            killSwitch = KillSwitchState.Unknown;
+        }
+
+        var map = new Dictionary<Capability, CapabilityPolicy>();
+
+        foreach (var policy in capabilities ?? [])
+        {
+            // Last one wins rather than throwing: a duplicated entry is a configuration mistake,
+            // and refusing to start is a harsher failure than it warrants. The resulting context
+            // is still deterministic for a given input order.
+            map[policy.Capability] = policy;
+        }
+
+        return new PolicyContext(trimmed, killSwitch, map);
+    }
+
+    /// <summary>
+    /// The context to use when policy could not be loaded. Denies everything.
+    /// </summary>
+    public static PolicyContext FailClosed(string environmentName = "unknown") =>
+        Create(environmentName, KillSwitchState.Unknown, []);
+
+    public bool TryGetPolicy(Capability capability, out CapabilityPolicy? policy)
+    {
+        if (_capabilities.TryGetValue(capability, out var found))
+        {
+            policy = found;
+            return true;
+        }
+
+        policy = null;
+        return false;
+    }
+}

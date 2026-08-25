@@ -1,0 +1,87 @@
+<Project>
+
+  <!--
+    Solution-wide build governance.
+    Applies to every project under this directory unless a project explicitly overrides it.
+    Reference: docs/decisions/0001-phase0-phase1-approved-decisions.md
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!--
+      Warnings are errors everywhere, so they can never accumulate silently.
+    -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+
+    <!--
+      PINNED to the 8.0 analyzer wave rather than 'latest-Recommended'.
+
+      'latest' means "whatever ships with the SDK that happens to be installed". Combined with
+      TreatWarningsAsErrors and global.json's rollForward, that makes an SDK upgrade - or a
+      build agent with a newer SDK than this machine - able to fail a build that has not
+      changed. Analyzer rule sets are a dependency and are pinned like one.
+
+      Raising this is a deliberate change: bump the wave, fix what it surfaces, commit both
+      together.
+    -->
+    <AnalysisLevel>8.0-Recommended</AnalysisLevel>
+
+    <!--
+      CA1032 "Implement standard exception constructors" is suppressed deliberately, and it is
+      the only rule-level suppression in this repository.
+
+      The rule targets exception types that cross a library boundary and may be constructed
+      generically or by a deserializer. The domain exceptions here are the opposite: each one
+      exists to carry structured context that the catch site depends on - which parameter was
+      invalid, which rule was violated, which two currencies were mismatched. Adding the
+      parameterless and message-only constructors the rule wants would make it possible to
+      create a DomainValidationException that names no parameter, which is precisely the state
+      the type is designed to make unrepresentable.
+
+      Removing this line is fine if the exception design changes; weakening the types to satisfy
+      the analyzer is not.
+    -->
+    <NoWarn>$(NoWarn);CA1032</NoWarn>
+
+    <!--
+      Deliberately NOT enabled: EnforceCodeStyleInBuild. IDE#### code-style rules are
+      governed by .editorconfig inside the IDE. Promoting them to build errors makes
+      formatting preferences break the build, which is a different problem from
+      correctness warnings.
+    -->
+    <EnforceCodeStyleInBuild>false</EnforceCodeStyleInBuild>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NeutralLanguage>en</NeutralLanguage>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <PropertyGroup Label="Product">
+    <Product>AI Investment Analyst</Product>
+    <Company>AI Investment Analyst</Company>
+    <VersionPrefix>0.1.0</VersionPrefix>
+  </PropertyGroup>
+
+  <!--
+    NOTE: there is deliberately no `Condition="'$(IsTestProject)' == 'true'"` block here.
+
+    Directory.Build.props is imported BEFORE the project body, so a property the .csproj sets in
+    its own PropertyGroup is not yet defined when this file is evaluated - such a condition is
+    always false and the block silently does nothing. An earlier version of this file had exactly
+    that dead block.
+
+    Test-specific settings live in tests/Directory.Build.props, which MSBuild picks up as the
+    nearest props file for everything under tests/ and which imports this file first.
+  -->
+
+</Project>

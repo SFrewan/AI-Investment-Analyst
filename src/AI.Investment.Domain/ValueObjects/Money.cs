@@ -1,0 +1,132 @@
+using System.Globalization;
+using AI.Investment.Domain.Exceptions;
+
+namespace AI.Investment.Domain.ValueObjects;
+
+/// <summary>
+/// An amount of a specific currency.
+/// </summary>
+/// <remarks>
+/// <para>
+/// Three rules are deliberate and non-negotiable:
+/// </para>
+/// <list type="number">
+/// <item>An amount never exists without a currency. There is no constructor that takes a bare
+/// <see cref="decimal"/>.</item>
+/// <item>Arithmetic between different currencies throws
+/// <see cref="CurrencyMismatchException"/> rather than converting. There is no ambient
+/// exchange rate anywhere in this system, and Phase 1 deliberately builds no FX mechanism -
+/// conversion, when it exists, will be an explicit operation carrying its own rate, source and
+/// timestamp, and will produce a <c>Claim</c> with provenance like any other derived value.</item>
+/// <item>No implicit conversion to or from <see cref="decimal"/> exists. An implicit conversion
+/// would let a currency-free number re-enter the model silently, which is the failure this type
+/// exists to prevent.</item>
+/// </list>
+/// <para>
+/// Rounding is not applied here. The stored amount is exactly what was supplied; rounding is a
+/// presentation and settlement concern that depends on the currency's minor unit and on the
+/// venue's rules, and applying it early destroys information.
+/// </para>
+/// </remarks>
+public sealed record Money
+{
+    private Money(decimal amount, Currency currency)
+    {
+        Amount = amount;
+        Currency = currency;
+    }
+
+    public decimal Amount { get; }
+
+    public Currency Currency { get; }
+
+    public bool IsZero => Amount == 0m;
+
+    public bool IsPositive => Amount > 0m;
+
+    public bool IsNegative => Amount < 0m;
+
+    public static Money Create(decimal amount, Currency currency)
+    {
+        ArgumentNullException.ThrowIfNull(currency);
+        return new Money(amount, currency);
+    }
+
+    public static Money Create(decimal amount, string currencyCode) =>
+        new(amount, Currency.Create(currencyCode));
+
+    public static Money Zero(Currency currency)
+    {
+        ArgumentNullException.ThrowIfNull(currency);
+        return new Money(0m, currency);
+    }
+
+    /// <summary>Zero US dollars. Convenience for actions with no financial effect.</summary>
+    public static Money ZeroUsd { get; } = new(0m, Currency.Usd);
+
+    public Money Add(Money other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        EnsureSameCurrency(this, other);
+        return new Money(Amount + other.Amount, Currency);
+    }
+
+    public Money Subtract(Money other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        EnsureSameCurrency(this, other);
+        return new Money(Amount - other.Amount, Currency);
+    }
+
+    public Money MultiplyBy(decimal factor) => new(Amount * factor, Currency);
+
+    public Money Negate() => new(-Amount, Currency);
+
+    public Money Abs() => new(Math.Abs(Amount), Currency);
+
+    /// <summary>
+    /// Compares two amounts of the SAME currency. Throws for a currency mismatch rather than
+    /// returning an arbitrary ordering.
+    /// </summary>
+    public bool IsGreaterThan(Money other)
+    {
+        ArgumentNullException.ThrowIfNull(other);
+        EnsureSameCurrency(this, other);
+        return Amount > other.Amount;
+    }
+
+    public static Money operator +(Money left, Money right)
+    {
+        ArgumentNullException.ThrowIfNull(left);
+        return left.Add(right);
+    }
+
+    public static Money operator -(Money left, Money right)
+    {
+        ArgumentNullException.ThrowIfNull(left);
+        return left.Subtract(right);
+    }
+
+    public static Money operator *(Money left, decimal factor)
+    {
+        ArgumentNullException.ThrowIfNull(left);
+        return left.MultiplyBy(factor);
+    }
+
+    public static Money operator -(Money value)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        return value.Negate();
+    }
+
+    public override string ToString() =>
+        string.Create(CultureInfo.InvariantCulture, $"{Amount} {Currency.Code}");
+
+    private static void EnsureSameCurrency(Money left, Money right)
+    {
+        if (left.Currency != right.Currency)
+        {
+            throw new CurrencyMismatchException(left.Currency.Code, right.Currency.Code);
+        }
+    }
+}

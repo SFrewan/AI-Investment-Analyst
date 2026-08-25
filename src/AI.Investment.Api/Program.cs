@@ -1,0 +1,213 @@
+using AI.Investment.Api.Configuration;
+using AI.Investment.Api.Correlation;
+using AI.Investment.Api.Diagnostics;
+using AI.Investment.Api.Middleware;
+using AI.Investment.Application;
+using AI.Investment.Application.Abstractions;
+using AI.Investment.Infrastructure;
+using AI.Investment.Infrastructure.Configuration;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Serilog;
+using Serilog.Events;
+
+namespace AI.Investment.Api;
+
+/// <summary>
+/// Composition root for the AI Investment Analyst API.
+/// </summary>
+/// <remarks>
+/// <para>
+/// This is the ONLY file in this project permitted to reference types from
+/// AI.Investment.Infrastructure. The API references that project so the DI container can be
+/// wired here; everywhere else the API talks to the Application layer's abstractions. An
+/// architecture test enforces this rather than leaving it to discipline.
+/// </para>
+/// <para>
+/// Written as an explicit class rather than top-level statements: top-level statements place
+/// the generated <c>Program</c> type in the global namespace, which trips CA1050 under
+/// warnings-as-errors and needs a partial-class workaround for
+/// <c>WebApplicationFactory&lt;Program&gt;</c>. An ordinary class avoids both.
+/// </para>
+/// </remarks>
+public sealed class Program
+{
+    // Allocated once rather than on every call (CA1861). Health-check registration happens at
+    // start-up only, so this is about the rule being consistently applied rather than about
+    // this particular allocation.
+    private static readonly string[] LivenessTags = ["live"];
+    private static readonly string[] ReadinessTags = ["ready"];
+
+    // Sealed with a private constructor rather than 'static': WebApplicationFactory<Program>
+    // in AI.Investment.Api.Tests needs Program as a generic type argument, and a static class
+    // cannot be one (CS0718).
+    private Program()
+    {
+    }
+
+    public static async Task<int> Main(string[] args)
+    {
+        // A bootstrap logger, so that failures during host construction - a missing
+        // connection string, a failed options validation - are recorded rather than lost
+        // to a blank console.
+        Log.Logger = new LoggerConfiguration()
+            .MinimumLevel.Information()
+            .WriteTo.Console()
+            .CreateBootstrapLogger();
+
+        try
+        {
+            Log.Information("Starting AI Investment Analyst API host");
+
+            var app = BuildApplication(args);
+            await app.RunAsync().ConfigureAwait(false);
+            return 0;
+        }
+#pragma warning disable CA1031 // Deliberate: the top-level handler must record ANY start-up
+                              // failure before the process exits, or the reason is lost.
+        catch (Exception ex)
+        {
+            Log.Fatal(ex, "AI Investment Analyst API host terminated unexpectedly");
+            return 1;
+        }
+#pragma warning restore CA1031
+        finally
+        {
+            // Async variant, because this sits inside an async method and the sync call is a
+            // sync-over-async block (CA1849). Flushing matters here: buffered log events for
+            // the failure that is terminating the process are exactly the ones worth keeping.
+            await Log.CloseAndFlushAsync().ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
+    /// Builds the configured application. Separated from <see cref="Main"/> so that
+    /// integration tests can exercise the same composition without starting a process.
+    /// </summary>
+    internal static WebApplication BuildApplication(string[] args)
+    {
+        var builder = WebApplication.CreateBuilder(args);
+
+        ConfigureLogging(builder);
+        ConfigureServices(builder);
+
+        var app = builder.Build();
+        ConfigurePipeline(app);
+
+        return app;
+    }
+
+    private static void ConfigureLogging(WebApplicationBuilder builder)
+    {
+        builder.Host.UseSerilog((context, services, configuration) => configuration
+            .ReadFrom.Configuration(context.Configuration)
+            .ReadFrom.Services(services)
+            .Enrich.FromLogContext()
+            .Enrich.WithProperty(
+                "Application",
+                context.Configuration["Observability:ServiceName"] ?? "AI.Investment.Api")
+            .Enrich.WithProperty("Environment", context.HostingEnvironment.EnvironmentName)
+            .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+            .WriteTo.Console());
+    }
+
+    private static void ConfigureServices(WebApplicationBuilder builder)
+    {
+        // ---- Configuration -------------------------------------------------------------
+        // Validated at start-up. A misconfigured deployment must not begin accepting traffic.
+        builder.Services.AddValidatedOptions<ObservabilityOptions>(
+            builder.Configuration,
+            ObservabilityOptions.SectionName);
+
+        // ---- Application and infrastructure ---------------------------------------------
+        // The ONLY place in this project permitted to reference AI.Investment.Infrastructure.
+        // An architecture test fails the build if an Infrastructure type is used anywhere else.
+        builder.Services.AddApplication();
+        builder.Services.AddInfrastructure(builder.Configuration);
+
+        // Infrastructure binds and validates its own options; whether an invalid value should
+        // prevent this host from accepting traffic is a decision for the host, and it is made
+        // here. A misconfigured deployment fails at start-up rather than on the first request
+        // that happens to read the setting - which, once background processing exists, could be
+        // hours later and on a different machine.
+        builder.Services.AddOptions<DatabaseOptions>().ValidateOnStart();
+
+        // Adapter between the transport and the application's correlation abstraction.
+        builder.Services.AddHttpContextAccessor();
+        builder.Services.AddScoped<ICorrelationContext, HttpCorrelationContext>();
+
+        // ---- Web -------------------------------------------------------------------------
+        builder.Services.AddControllers();
+        builder.Services.AddEndpointsApiExplorer();
+        builder.Services.AddSwaggerGen();
+
+        builder.Services.AddProblemDetails();
+        builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+
+        builder.Services.AddHealthChecks()
+            .AddCheck(
+                "self",
+                () => HealthCheckResult.Healthy("API host is running"),
+                tags: LivenessTags)
+            .AddCheck<DatabaseHealthCheck>(
+                "postgresql",
+                failureStatus: HealthStatus.Unhealthy,
+                tags: ReadinessTags);
+    }
+
+    private static void ConfigurePipeline(WebApplication app)
+    {
+        // Order matters: correlation first, so every subsequent log event and every error
+        // response carries the identifier.
+        app.UseCorrelationId();
+        app.UseExceptionHandler();
+
+        app.UseSerilogRequestLogging(options =>
+        {
+            options.EnrichDiagnosticContext = (diagnosticContext, httpContext) =>
+            {
+                if (httpContext.Items.TryGetValue(
+                        CorrelationIdMiddleware.HttpContextItemKey,
+                        out var correlationId))
+                {
+                    diagnosticContext.Set("CorrelationId", correlationId);
+                }
+            };
+        });
+
+        if (app.Environment.IsDevelopment())
+        {
+            app.UseSwagger();
+            app.UseSwaggerUI();
+        }
+        else
+        {
+            app.UseHsts();
+        }
+
+        app.UseHttpsRedirection();
+
+        // NOTE: authentication and authorization are deliberately NOT registered.
+        // The pre-Phase-0 solution called UseAuthorization() with no authentication scheme,
+        // which is a no-op that reads as security in review (audit finding F-03). Real
+        // OIDC/JWT authentication is scheduled work; an honest absence is safer than a
+        // decorative call. Until it exists, do not expose this API beyond localhost.
+        // See docs/SECURITY.md.
+
+        app.MapHealthChecks("/health/live", new HealthCheckOptions
+        {
+            Predicate = registration => registration.Tags.Contains("live"),
+        });
+
+        // Readiness: the database must be reachable before this instance takes traffic.
+        app.MapHealthChecks("/health/ready", new HealthCheckOptions
+        {
+            Predicate = registration => registration.Tags.Contains("ready"),
+        });
+
+        // Aggregate endpoint: every registered check.
+        app.MapHealthChecks("/health");
+
+        app.MapControllers();
+    }
+}

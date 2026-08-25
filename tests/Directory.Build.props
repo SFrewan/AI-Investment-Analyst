@@ -1,0 +1,36 @@
+<Project>
+
+  <!--
+    Build settings for test projects only.
+
+    MSBuild uses the NEAREST Directory.Build.props walking up from a project, so this file
+    replaces the one at the repository root for everything under tests/. The import below pulls
+    the root settings back in first, so test projects still get the shared target framework,
+    nullable settings, warnings-as-errors and the pinned analyzer level - this file only adds to
+    them.
+  -->
+
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <!--
+      CA1707 "Identifiers should not contain underscores" is suppressed for test projects.
+
+      Test method names use Method_Scenario_Expectation - "A_denied_action_never_invokes_the
+      _effect" - because the name IS the failure message. When that test goes red in CI, the
+      underscored name states the broken behaviour in the output without anyone opening the file.
+      The camel-case alternative is materially worse at the one moment a test name matters.
+
+      CA1707 exists to keep PUBLIC API identifiers idiomatic for consumers across languages.
+      A test method has no consumers; xUnit reflects over it. The rule is not wrong, it is
+      aimed at something else - so it is scoped off here and stays fully enforced in src/.
+    -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+</Project>
