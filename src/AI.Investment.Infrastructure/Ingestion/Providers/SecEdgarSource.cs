@@ -1,3 +1,4 @@
+using AI.Investment.Application.Abstractions;
 using AI.Investment.Domain.Sources;
 
 namespace AI.Investment.Infrastructure.Ingestion.Providers;
@@ -20,7 +21,7 @@ namespace AI.Investment.Infrastructure.Ingestion.Providers;
 /// the permission.
 /// </para>
 /// </remarks>
-public static class SecEdgarSource
+public sealed class SecEdgarSource : ISourceDefinition
 {
     public const string LicensingNotes =
         "U.S. government records, public domain. Storage, redistribution and automated processing " +
@@ -28,10 +29,13 @@ public static class SecEdgarSource
         "identifying the application and a contact e-mail, and caps request rate; both are handled " +
         "by the connector and are conditions of use rather than optional.";
 
+    /// <inheritdoc />
+    public SourceId SourceId => SecEdgarProvider.Id;
+
     /// <summary>
     /// Builds the registry entry, inactive.
     /// </summary>
-    public static DataSource Definition(DateTime nowUtc) =>
+    public DataSource Definition(DateTime nowUtc) =>
         DataSource.Register(
             SecEdgarProvider.Id,
             "U.S. Securities and Exchange Commission - EDGAR",
@@ -53,7 +57,12 @@ public static class SecEdgarSource
                 redistributionAllowed: true,
                 automatedProcessingAllowed: true,
                 attributionRequired: true,
-                LicensingNotes),
+                notes: LicensingNotes,
+
+                // Public-domain government records carry no retention obligation. Stated
+                // explicitly rather than defaulted, so the registry records a fact about the
+                // licence instead of the absence of a decision.
+                retention: RetentionLimit.Unlimited),
 
             // The originating record. Nothing corroborates a filing better than the filing.
             VerificationPolicy.Authoritative,

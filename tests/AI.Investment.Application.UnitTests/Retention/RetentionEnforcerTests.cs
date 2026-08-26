@@ -90,9 +90,10 @@ public sealed class RetentionEnforcerTests
         var harness = Build(Source(RetentionLimit.Unlimited), isReferenced: false);
         var hash = Seed(harness, Now.AddYears(-10));
 
-        var decision = await harness.Enforcer.EnforceAsync(hash);
+        var result = await harness.Enforcer.EnforceAsync(hash);
 
-        Assert.Equal(RetentionOutcome.Retain, decision.Outcome);
+        Assert.Equal(RetentionOutcome.Retain, result.Decision.Outcome);
+        Assert.Equal(RetentionAction.NothingRequired, result.Action);
         Assert.Empty(harness.Archive.Deleted);
     }
 
@@ -102,9 +103,10 @@ public sealed class RetentionEnforcerTests
         var harness = Build(Source(RetentionLimit.OfDays(365)), isReferenced: false);
         var hash = Seed(harness, Now.AddDays(-100));
 
-        var decision = await harness.Enforcer.EnforceAsync(hash);
+        var result = await harness.Enforcer.EnforceAsync(hash);
 
-        Assert.Equal(RetentionOutcome.Retain, decision.Outcome);
+        Assert.Equal(RetentionOutcome.Retain, result.Decision.Outcome);
+        Assert.Equal(RetentionAction.NothingRequired, result.Action);
         Assert.Empty(harness.Archive.Deleted);
     }
 
@@ -114,9 +116,11 @@ public sealed class RetentionEnforcerTests
         var harness = Build(Source(RetentionLimit.OfDays(365)), isReferenced: false);
         var hash = Seed(harness, Now.AddDays(-400));
 
-        var decision = await harness.Enforcer.EnforceAsync(hash);
+        var result = await harness.Enforcer.EnforceAsync(hash);
 
-        Assert.True(decision.RequiresDeletion);
+        Assert.True(result.Decision.RequiresDeletion);
+        Assert.Equal(RetentionAction.Deleted, result.Action);
+        Assert.True(result.WasDeleted);
         Assert.Single(harness.Archive.Deleted);
         Assert.Empty(harness.Markers.Recorded);
     }
@@ -156,10 +160,40 @@ public sealed class RetentionEnforcerTests
 
         var hash = Seed(harness, Now.AddDays(-400));
 
-        await harness.Enforcer.EnforceAsync(hash);
+        var result = await harness.Enforcer.EnforceAsync(hash);
 
         Assert.Empty(harness.Archive.Deleted);
         Assert.Empty(harness.Markers.Recorded);
+
+        // The obligation stands and the payload is still on disk. Reporting only the decision
+        // would let a caller record this as discharged.
+        Assert.True(result.Decision.RequiresDeletion);
+        Assert.Equal(RetentionAction.DeletionRefused, result.Action);
+        Assert.True(result.IsOutstanding);
+        Assert.False(result.WasDeleted);
+    }
+
+    /// <summary>
+    /// Approval and duplicate suppression are not deletions either. Both leave the payload in
+    /// place, and both must be visible as outstanding rather than as work completed.
+    /// </summary>
+    [Theory]
+    [InlineData(ActionOutcomeStatus.ApprovalRequired)]
+    [InlineData(ActionOutcomeStatus.DuplicateSuppressed)]
+    public async Task A_deletion_that_does_not_execute_is_reported_as_outstanding(
+        ActionOutcomeStatus status)
+    {
+        var harness = Build(
+            Source(RetentionLimit.OfDays(365)),
+            isReferenced: false,
+            policy: status);
+
+        var hash = Seed(harness, Now.AddDays(-400));
+
+        var result = await harness.Enforcer.EnforceAsync(hash);
+
+        Assert.Equal(RetentionAction.DeletionRefused, result.Action);
+        Assert.Empty(harness.Archive.Deleted);
     }
 
     [Fact]
@@ -188,10 +222,10 @@ public sealed class RetentionEnforcerTests
         var harness = Build(source: null, isReferenced: false);
         var hash = Seed(harness, Now.AddYears(-10));
 
-        var decision = await harness.Enforcer.EnforceAsync(hash);
+        var result = await harness.Enforcer.EnforceAsync(hash);
 
-        Assert.Equal(RetentionOutcome.Retain, decision.Outcome);
-        Assert.Equal(RetentionEnforcer.UnknownSourceRule, decision.RuleId);
+        Assert.Equal(RetentionOutcome.Retain, result.Decision.Outcome);
+        Assert.Equal(RetentionEnforcer.UnknownSourceRule, result.Decision.RuleId);
         Assert.Empty(harness.Archive.Deleted);
     }
 
@@ -203,11 +237,11 @@ public sealed class RetentionEnforcerTests
     {
         var harness = Build(Source(RetentionLimit.OfDays(1)), isReferenced: false);
 
-        var decision = await harness.Enforcer.EnforceAsync(
+        var result = await harness.Enforcer.EnforceAsync(
             Domain.Ingestion.ContentHash.Compute(Encoding.UTF8.GetBytes("never stored")));
 
-        Assert.Equal(RetentionOutcome.Retain, decision.Outcome);
-        Assert.Equal(RetentionEnforcer.NothingArchivedRule, decision.RuleId);
+        Assert.Equal(RetentionOutcome.Retain, result.Decision.Outcome);
+        Assert.Equal(RetentionEnforcer.NothingArchivedRule, result.Decision.RuleId);
     }
 
     /// <summary>
@@ -227,9 +261,9 @@ public sealed class RetentionEnforcerTests
         var harness = Build(Source(RetentionLimit.OfDays(limitDays)), isReferenced: false);
         var hash = Seed(harness, Now.AddDays(-ageDays));
 
-        var decision = await harness.Enforcer.EnforceAsync(hash);
+        var result = await harness.Enforcer.EnforceAsync(hash);
 
-        Assert.Equal(expectDeletion, decision.RequiresDeletion);
+        Assert.Equal(expectDeletion, result.Decision.RequiresDeletion);
         Assert.Equal(expectDeletion ? 1 : 0, harness.Archive.Deleted.Count);
     }
 }

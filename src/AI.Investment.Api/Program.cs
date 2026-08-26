@@ -1,6 +1,7 @@
 using AI.Investment.Api.Configuration;
 using AI.Investment.Api.Correlation;
 using AI.Investment.Api.Diagnostics;
+using AI.Investment.Api.HostedServices;
 using AI.Investment.Api.Middleware;
 using AI.Investment.Application;
 using AI.Investment.Application.Abstractions;
@@ -119,6 +120,13 @@ public sealed class Program
             builder.Configuration,
             ObservabilityOptions.SectionName);
 
+        // What this instance runs on its own. Both activities default to off - see
+        // DataPlaneOptions for why - and an out-of-range interval or batch size stops start-up
+        // rather than being discovered when the first sweep behaves strangely at 3am.
+        builder.Services.AddValidatedOptions<DataPlaneOptions>(
+            builder.Configuration,
+            DataPlaneOptions.SectionName);
+
         // ---- Application and infrastructure ---------------------------------------------
         // The ONLY place in this project permitted to reference AI.Investment.Infrastructure.
         // An architecture test fails the build if an Infrastructure type is used anywhere else.
@@ -135,6 +143,18 @@ public sealed class Program
         // Adapter between the transport and the application's correlation abstraction.
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddScoped<ICorrelationContext, HttpCorrelationContext>();
+
+        // ---- Background work -------------------------------------------------------------
+        // Both read DataPlaneOptions and return immediately when their activity is disabled,
+        // which it is by default. Registering them unconditionally keeps the decision in
+        // configuration rather than splitting it between here and there, and means the log says
+        // "disabled" rather than saying nothing at all.
+        //
+        // Seeding is what makes the data plane usable: until something calls it the registry
+        // starts empty and every ingestion run refuses. The sweep is the only activity in the
+        // platform that destroys evidence - enable it on exactly one instance.
+        builder.Services.AddHostedService<SourceSeedingHostedService>();
+        builder.Services.AddHostedService<RetentionSweepHostedService>();
 
         // ---- Web -------------------------------------------------------------------------
         builder.Services.AddControllers();

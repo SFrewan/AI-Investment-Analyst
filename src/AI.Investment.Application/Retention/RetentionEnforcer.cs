@@ -71,7 +71,7 @@ public sealed class RetentionEnforcer : IRetentionEnforcer
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
     }
 
-    public async Task<RetentionDecision> EnforceAsync(
+    public async Task<RetentionEnforcementResult> EnforceAsync(
         ContentHash hash,
         CancellationToken cancellationToken = default)
     {
@@ -83,10 +83,10 @@ public sealed class RetentionEnforcer : IRetentionEnforcer
         {
             // Nothing held, nothing to decide. Not an error: a sweep racing a previous pass, or a
             // payload already removed, should converge rather than throw.
-            return new RetentionDecision(
+            return RetentionEnforcementResult.Retained(new RetentionDecision(
                 RetentionOutcome.Retain,
                 NothingArchivedRule,
-                $"No payload is archived under {hash.Abbreviated}.");
+                $"No payload is archived under {hash.Abbreviated}."));
         }
 
         var source = await _sources.GetByIdAsync(payload.SourceId, cancellationToken).ConfigureAwait(false);
@@ -95,11 +95,11 @@ public sealed class RetentionEnforcer : IRetentionEnforcer
         {
             // The obligation lives in the source's terms. With no source there are no terms to
             // read, and an unknown obligation is not a licence to delete - it is a reason not to.
-            return new RetentionDecision(
+            return RetentionEnforcementResult.Retained(new RetentionDecision(
                 RetentionOutcome.Retain,
                 UnknownSourceRule,
                 $"Source '{payload.SourceId}' is not registered, so its retention terms cannot be " +
-                "read. An obligation that cannot be established never compels deletion.");
+                "read. An obligation that cannot be established never compels deletion."));
         }
 
         var isReferenced = await _references.IsReferencedAsync(hash, cancellationToken).ConfigureAwait(false);
@@ -112,15 +112,23 @@ public sealed class RetentionEnforcer : IRetentionEnforcer
 
         if (!decision.RequiresDeletion)
         {
-            return decision;
+            return RetentionEnforcementResult.Retained(decision);
         }
 
-        await DeleteAsync(hash, payload, decision, cancellationToken).ConfigureAwait(false);
+        var deleted = await DeleteAsync(hash, payload, decision, cancellationToken).ConfigureAwait(false);
 
-        return decision;
+        // Reported rather than assumed. The deletion declares itself irreversible, so an
+        // installation that has not granted automatic execution for Capability.DataRetention gets
+        // an approval requirement here every time - and a caller told only that deletion was
+        // *required* would record a compliance obligation as discharged when the payload is still
+        // on disk.
+        return new RetentionEnforcementResult(
+            decision,
+            deleted ? RetentionAction.Deleted : RetentionAction.DeletionRefused);
     }
 
-    private async Task DeleteAsync(
+    /// <summary>Proposes the deletion and reports whether the seam let it happen.</summary>
+    private async Task<bool> DeleteAsync(
         ContentHash hash,
         ArchivedPayload payload,
         RetentionDecision decision,
@@ -145,7 +153,7 @@ public sealed class RetentionEnforcer : IRetentionEnforcer
             $"retention.delete:{hash.Value}",
             _clock.UtcNow);
 
-        await _actionGateway.DispatchAsync(
+        var outcome = await _actionGateway.DispatchAsync(
             proposal,
             async token =>
             {
@@ -165,5 +173,7 @@ public sealed class RetentionEnforcer : IRetentionEnforcer
                 return decision.RuleId;
             },
             cancellationToken).ConfigureAwait(false);
+
+        return outcome.WasExecuted;
     }
 }

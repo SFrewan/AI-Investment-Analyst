@@ -1,15 +1,19 @@
 # Phase 2 — Global data and intelligence foundation
 
-**Status:** In progress — stages 1–5 and 7 implemented, plus approved retention policy; verification pending
-**Last updated:** 2026-08-25
+**Status:** Code complete — all ten stages implemented; **verification pending**
+**Last updated:** 2026-08-26
 
 ---
 
-> **This document is live.** Stages 6 and 8–10 are not yet built. Sections below describe
-> stages 1–5 and 7 as they exist in the repository. Stage 7 was taken ahead of stage 6 deliberately
-> — see section 15. The ingestion path is now **complete in code**: registry, gateway, connector,
-> archive and ledger all exist and are wired. It has never been executed, and the schema change it
-> needs has not been migrated.
+> **This document is live.** All ten approved stages are now built: registry, gateway, connector,
+> archive, ledger, normalisation, retention, freshness, the API surface and the architecture tests.
+> Stage 7 was taken ahead of stage 6 deliberately — see section 15.
+>
+> **Nothing in Phase 2 has ever been compiled, executed or migrated.** 635 executable test cases
+> exist across the solution and none has run; the five new tables have been validated against a
+> live PostgreSQL 16.13 instance by hand but the EF migration has not been generated. Everything
+> below describes code that exists in the repository and static verification that was actually
+> performed. No build, test or runtime result is claimed. See sections 12 and 18.
 
 ## 1. Phase objective
 
@@ -325,6 +329,92 @@ Registering it would build a container that cannot construct it, and ASP.NET Cor
 container on build in Development — so the whole application would fail to start rather than one
 feature being absent. A half-registered graph turns a missing feature into a dead host.
 
+### Stage 6 — normalisation: from bytes to what the platform knows
+
+Ingestion establishes that a source may be used and captures exactly what it said. Stage 6 is the
+other half: deciding what those bytes *mean*. The two are separate on purpose — a normaliser can be
+fixed and re-run against the original payload precisely because reading it was never allowed to
+change it.
+
+**`Observation`** is the unit of knowledge. A `Claim<T>` carries a value, its provenance and its
+epistemic status, but not what the value is *about*: "3571" with impeccable provenance is still not
+knowledge until something says it is Apple's SIC code. An observation is that missing sentence —
+subject, attribute, value, provenance.
+
+The epistemic invariants are **not re-implemented**. `Observation.RecordFact` materialises through
+`Claims.Fact`, so the ordering rules that make a fact a fact (it cannot be published before the
+period it describes, nor retrieved before it was published) are enforced by the type that owns them.
+`ToClaim()` rebuilds through the same factory, and **refuses** a stored kind this build cannot
+rebuild rather than downgrading it to a fact — presenting a prediction as an observation is the
+single worst thing this model can do.
+
+`Attribute` is a dotted string, not an enumeration. The platform's scope spans companies, products,
+suppliers, currencies and routes; an enum of every attribute any domain might have would need
+editing before a new one could be described. `company.name`, `product.unit-price` and
+`route.transit-days` are the same shape to everything that stores or queries them.
+
+**`ObservationValue`** is one kind plus one culture-invariant canonical string. Storing numbers as
+text is a deliberate trade: a canonical `decimal` round-trip loses nothing, and it keeps every
+observation in one column regardless of type — which is what lets a single table hold a company
+name, a revenue figure, a flag and a filing date without a column per normaliser. Reading a value
+as the wrong type throws rather than producing a plausible number.
+
+**`INormalizer`** is the counterpart to `IDataProvider`: a connector knows how to *fetch* a
+source's bytes, a normaliser knows how to *read* them. They change for different reasons — a
+provider moving to a new endpoint does not change what its JSON means. Implementations parse and
+nothing else: they do not fetch, store, decide whether a source may be used, or delete anything.
+
+**A normaliser must never invent a value it did not find.** Absent is absent. An observation that
+exists only because a field was missing is worse than a gap, because a gap is visible in a query
+and a fabricated value is not.
+
+**`SecEdgarSubmissionsNormalizer`** reads seven top-level fields plus the first ticker/exchange pair
+and ignores everything else, including the filing history the same document carries. Ignoring is
+deliberate: a normaliser that absorbed an entire response would break every time the provider added
+a field, and filings deserve their own normaliser rather than a corner of this one. Only the first
+ticker is recorded — a company's primary listing is one fact, and flattening three into one
+attribute would produce a value that is true of none of them.
+
+Its provenance timing is stated honestly rather than conveniently. EDGAR's submissions document
+describes a company's *current* state and carries no publication date of its own, so all three
+timestamps are the retrieval time and **every observation carries a caveat saying so** — a backtest
+filtering on publication needs to know that date is a floor, not the moment the fact became true.
+
+**`NormalizationPipeline`** walks a run's artifacts and writes what it read.
+
+| Rule | When it fires |
+|---|---|
+| `normalization.no-normalizer@1` | Nothing registered reads that source and category |
+| `normalization.payload-missing@1` | The archive no longer holds bytes the run recorded |
+| `normalization.unreadable-payload@1` | The payload is not JSON this build can parse |
+| `normalization.unexpected-document@1` | It parses, but is not the document it claims to be |
+
+**A payload that cannot be read is quarantined, never dropped.** Failure to normalise is evidence —
+of a changed schema, a wrong assumption, or a genuinely malformed response — and all three deserve
+investigating. Discarded, they become indistinguishable from data that never arrived.
+`QuarantinedPayload` is keyed by content hash, so a retry collides with the original record instead
+of making one problem look like two, and its reason field never carries an excerpt of the payload:
+that record is long-lived and unredactable, and a malformed response is exactly the kind of thing
+that might contain something sensitive. The bytes are already in the archive for anyone who needs
+them.
+
+**Writing observations goes through the seam; quarantining does not.** An observation is something
+the platform *believes*, which makes recording one a side effect like any other — dispatched under
+`Capability.DataIngestion`, keyed `normalization.record:{runId}` so replaying a run cannot double
+its observations, and described to the audit trail as counts and categories rather than values. A
+quarantine record is the opposite case: like the ingestion ledger it must be writable precisely
+when nothing is authorised, because a policy denial is one of the things worth quarantining a run
+over. It creates no belief and changes no domain state, so the exemption grants nothing beyond that.
+
+A denial records zero observations while still reporting the payloads it read. The two are separate
+facts, and collapsing them would hide the denial behind what looks like an empty response.
+
+Normalisers are registered **unconditionally**, outside any connector's registration. A normaliser
+reads bytes already in the archive; whether the connector that fetched them is currently enabled
+has nothing to do with whether they can still be read. Tying the two together would mean turning
+EDGAR off quarantined every payload it had ever retrieved, under a rule claiming no normaliser
+existed — which would be false.
+
 ### Stage 7 — historical persistence
 
 The stage that makes everything before it reachable. `IIngestionGateway` is now registered,
@@ -386,6 +476,82 @@ set. The registry is ordinary domain state, so registering or activating a sourc
 that must pass through the seam like any other — which is exactly the property that stops a
 connector from switching itself on.
 
+### Stage 8 — freshness, data events, and the retention sweep
+
+Three things that were built for each other and had never been joined: the cadence a source
+declares, the ledger of when it last succeeded, and the enforcer that decides what may still be
+kept.
+
+**`FreshnessPolicy`** decides whether a source's data is current. Pure and total, like the policy
+engine and the retention policy, and for the same reason: "why was this not refreshed?" is asked
+long after the fact, and an answer that depended on a clock or a database cannot be reconstructed.
+
+Staleness is meaningless without an expectation. A quarterly filing three weeks old is perfectly
+current; a price three weeks old is worthless. That expectation lives on the source as its
+`UpdateCadence`, which is why the policy takes a source rather than a duration.
+
+| Rule | Conclusion |
+|---|---|
+| `freshness.source-inactive@1` | `NotScheduled` — switched off, not late |
+| `freshness.no-expected-interval@1` | `NotScheduled` — event-driven or on demand; it cannot be late |
+| `freshness.interval-unknown@1` | `Overdue` — a cadence that should carry an interval does not |
+| `freshness.never-ingested@1` | `NeverIngested` — distinct from overdue, and a different problem |
+| `freshness.overdue@1` | `Overdue` |
+| `freshness.current@1` | `Current` |
+
+**Where this fails, it fails towards refreshing** — the opposite of every other gate in the
+platform, and deliberately so. Elsewhere uncertainty guards an irreversible act and must deny.
+Here the errors are asymmetric the other way: wrongly refreshing costs one redundant request, while
+wrongly reporting stale data as current means every downstream decision is made on data nobody
+knows is old. The reversible mistake is the one to make.
+
+**`FreshnessReport`** answers it across the registry. Two collaborators and the pure policy: the
+registry says what was expected, the ledger says when a run last succeeded, and all the judgement
+stays where it can be exercised without a database. Two details carry real weight. **Only
+successful runs count** — a source refused fifty times running has not been refreshed, and reading
+the latest run of any outcome would report it as current, which is exactly the failure the report
+exists to catch. And freshness is dated from **completion, not start**: a run that began inside the
+interval and finished outside it delivered data as of when it finished.
+
+Inactive sources are reported rather than filtered out. A source somebody deactivated and forgot is
+a real cause of missing data, and omitting it would make that invisible; the policy marks it
+`NotScheduled` so it is visible without being alarming. The report is read-only and therefore
+deliberately outside the safety seam: the seam gates side effects, and auditing reads would bury
+the record of what actually changed.
+
+**`RetentionSweep`** is the recurring half of retention. `IRetentionEnforcer` decides about one
+payload and knows nothing of scheduling; the sweep decides when to go looking and knows nothing of
+licensing. Every deletion still passes through the seam, one authorisation per payload, because
+batching them would ask an operator to authorise a number rather than a decision.
+
+It is bounded and honest about it. A sweep takes a limit and reports whether it reached the end of
+the archive, because "nothing left to delete" is a compliance statement and "we stopped looking" is
+not. `IRawResponseArchive.EnumerateAsync` was added for it — streamed rather than listed, since an
+archive outgrows memory long before it outgrows disk.
+
+**A defect was found and fixed while wiring this up.** `IRetentionEnforcer` returned only the
+`RetentionDecision` — what the licence *requires* — and discarded the seam's outcome. But retention
+deletion declares itself irreversible, so an installation that has not granted automatic execution
+for `Capability.DataRetention` gets an approval requirement on *every* payload by design. The
+enforcer therefore knew that nothing had been deleted and threw that fact away, and a sweep built
+on it would have reported fifty discharged obligations while fifty payloads sat on disk. It now
+returns `RetentionEnforcementResult`, carrying both the obligation and what came of it.
+
+The sweep counts refusals and failures separately for the same reason. Counting a thrown exception
+as a policy refusal would let a database outage report as five thousand payloads that policy
+declined to delete — a sentence about compliance that nothing observed. One poisoned payload does
+not end a sweep, because a sweep that died on the same entry every time would block the obligation
+permanently; but it is counted as a failure, not disguised as a decision.
+
+**`DataAcquisitionService`** joins the two halves of acquiring data into the one operation a caller
+wants: ingest, then normalise what was archived. Deliberately thin, because any judgement here
+would be judgement that had escaped the gateway or the pipeline. What it contributes is restraint.
+A refused run is **not** normalised — doing so would quarantine a payload that was never fetched,
+inventing a data-quality problem out of a compliance decision. A partial run **is** normalised: it
+archived real bytes, and discarding them because more was expected would throw away good data. And
+`AcquisitionResult.Normalization` is null rather than a zero-filled summary when normalisation was
+not attempted, because "we did not look" and "we looked and found nothing" are different facts.
+
 ### Retention — approved and implemented (Option C, tiered by licence, with a floor)
 
 The decision presented in section 18 was approved: **retention obligations attach to sources
@@ -445,6 +611,150 @@ than storing millions of copies of "nothing happened".
 **Not built, deliberately:** storage tiering, and the scheduled sweep that walks the archive.
 `IRetentionEnforcer` decides per payload, which is pure and exhaustively testable; deciding *when*
 to walk is scheduling and belongs with stage 8.
+
+### Source registration — the registry can finally be filled
+
+Until this, `ISourceRegistry.Add` existed and nothing called it: the registry started empty and
+every ingestion run refused with `ingestion.source-registered@1` — correct, but useless.
+
+**`ISourceDefinition`** lets a connector ship its own source's definition. A connector knows its
+regulator's authority, licensing, coverage and cadence better than anyone re-typing them, and
+`SecEdgarSource` now implements it. Nothing above Infrastructure names a provider: the seeding
+handler iterates whatever definitions the container holds.
+
+**`RegisterKnownSourcesHandler`** puts them in the registry, **one proposal per source** rather
+than one for the batch — so a refusal of one does not silently take the others with it, and the
+audit trail records which source was admitted rather than that "seeding ran". Sources are
+registered **inactive**; shipping a connector is not deciding to use it.
+
+**Existing entries are left exactly as they are.** A source already registered may have been
+re-licensed, deactivated or re-scored by an operator, and overwriting it with the shipped
+definition on every start-up would quietly undo that. Seeding fills gaps; it does not reconcile.
+
+**`ActivateSourceHandler`** is the separate, deliberate act that makes a source usable — the
+consequential decision in the data plane, since from that moment its content becomes things the
+platform believes. The domain does the refusing: `DataSource.Activate` rejects terms that permit
+neither storage nor automated processing, so a licensing failure surfaces as a domain rule
+violation and would still refuse if some future caller bypassed the handler.
+
+Both route through the seam under `Capability.ReferenceDataManagement`, keyed idempotently on the
+source id.
+
+### Stage 9 — the API surface, and the callers that make the data plane run
+
+Every stage before this built something correct that nothing invoked. The registry could be seeded
+and was not; the sweep could run and did not; the pipeline could normalise and was never called.
+Stage 9 is where the data plane stops being a set of operations that work and starts being a system
+that runs.
+
+**`SourceSeedingHostedService`** calls `RegisterKnownSourcesHandler` once at start-up. This closes
+the gap that made everything else inert: until something called it, the registry started empty and
+every ingestion run refused with `ingestion.source-registered@1` - correct, and useless. Sources are
+still registered **inactive**; shipping a connector is not deciding to use it.
+
+**A seeding failure does not stop the host.** The API's other work does not depend on a complete
+registry, and refusing to start would turn a database hiccup into an outage. The failure is logged
+at error level, each refused source is named, and the instance comes up with an incomplete registry
+- which the freshness report then shows as sources that have never been ingested.
+
+**`RetentionSweepHostedService`** is the recurring caller `IRetentionSweep` was built for. It is
+**off by default and single-instance by assumption**: this is the only activity in the platform that
+destroys evidence, so it does not begin because a host happened to start. There is no distributed
+lock. Two instances could not double-delete - the seam deduplicates on content hash - but they would
+burn approval slots and audit rows discovering that.
+
+A sweep that finds more work waits for the next interval rather than chasing its backlog, because a
+continuous stream of deletion proposals is exactly the shape of thing an operator should be able to
+watch rather than discover. A failed sweep does not stop the timer: retention is an obligation that
+outlives one bad night.
+
+**`DataPlaneOptions`** carries both switches. Durations are configured as **integer minutes rather
+than timespans**, which is a small decision with a real reason: a duration in JSON invites values
+like `"24:00:00"`, and that is not a parseable timespan at all - the hours component may not exceed
+23, so the obvious way to write one day is silently wrong. An integer has one reading.
+
+**The read surface.** Three listings, all read-only and therefore deliberately outside the seam. The
+seam gates side effects; asking a question is not one, and auditing reads would bury the record of
+what changed under a record of who looked.
+
+| Endpoint | What it makes visible |
+|---|---|
+| `GET /api/sources` | The registry, including inactive sources |
+| `GET /api/sources/{id}` | One source and its licensing terms, permission by permission |
+| `POST /api/sources/{id}/activation` | The deliberate act, through the seam |
+| `GET /api/data-plane/freshness` | Which sources are behind, and which rule says so |
+| `GET /api/data-plane/runs` | Recent runs, **including refusals and the rule that caused each** |
+| `GET /api/data-plane/quarantine` | Payloads that arrived and could not be read |
+
+**This is the surface that makes silence legible.** A platform that ingests data fails in two ways:
+loudly, which needs no help, and quietly - a source that stopped publishing, a schema that changed,
+a policy that has been refusing every deletion for a month. Each listing exists so one of those
+becomes visible now instead of being discovered later by an analysis that returned less than it
+should have.
+
+Two details in the status codes are worth stating. A **malformed source identifier is a 400, not a
+404**: telling a caller that their well-formed id does not exist is a different and untrue
+statement, and one that sends them looking in the registry rather than at what they sent. And an
+**out-of-range page size is clamped rather than rejected** - a dashboard sending whatever its config
+says should get a bounded page, not an error.
+
+Activation keeps the status codes the seam makes necessary: `200` activated or already active,
+`202` policy requires a human decision and nothing changed, `403` refused - by policy, or by the
+domain, since `DataSource.Activate` rejects terms that permit neither storage nor automated
+processing.
+
+**DTOs, not aggregates.** `SourceDto`, `FreshnessDto`, `IngestionRunDto` and `QuarantinedPayloadDto`
+are separate shapes for the same reason `CompanyDto` is: serialising an aggregate exposes its
+internals and makes a domain refactor a breaking API change. Three of them carry a field that exists
+only to prevent a specific misreading - a licence's permissions crossing individually rather than as
+prose, an absent retention limit staying null rather than becoming zero, and a refused run carrying
+the versioned rule that stopped it.
+
+### Stage 10 — the data plane's invariants, as tests
+
+Stages 1 to 9 established properties that are easy to state and easy to erode. `DataPlaneRuleTests`
+turns seven of them from things somebody was careful about into things the build enforces.
+
+**The network is reached in exactly one layer.** Neither Domain nor Application may depend on
+`System.Net`. This is the rule that keeps the ingestion gateway meaningful: an application service
+holding an `HttpClient` would bypass source admission, provider capability checking, the rate
+limiter, the archive and the ledger in a single step - every gate the data plane has - and would
+look entirely ordinary doing it. The same property is asserted from the other direction too: no
+`IDataProvider` or `INormalizer` implementation may live outside Infrastructure, which catches the
+case where an implementation is written inside Application with a stub body and grown into a real
+one later.
+
+**Scheduling is a host concern.** Domain and Application may not depend on
+`Microsoft.Extensions.Hosting` or on a timer. The retention sweep is the case that makes this
+concrete: it knows how to walk the archive and nothing about when: the timer lives in the API's
+hosted service. Had the two been one type, the rule that destroys evidence could not be exercised
+without a clock.
+
+**The domain does not log.** Not a style rule. A domain rule that logged would be a domain rule with
+a side effect, and the point of keeping the policy engine, the retention policy and the freshness
+policy pure is that their conclusions can be reconstructed from their inputs alone.
+
+**Every enum defines a member for zero.** `default(T)` for an enum is zero whether or not zero is
+declared, so an enum without a zero member produces a value that is none of its cases and still
+passes every switch with a `default` branch. This platform leans hard on what an unset value means -
+`KillSwitchState.Unknown` denies, `ObservationValueKind.Unknown` refuses to be read,
+`PolicyOutcome.Deny` is the default outcome - and all of that reasoning assumes the default is a
+case somebody chose. The test deliberately does **not** assert which member is zero, because the
+right answer differs: most choose the unknown or safe case, while `RetentionOutcome.Retain` is
+zero precisely because there the irreversible operation is the deletion. What must never happen is
+zero belonging to nobody. All 26 enums currently satisfy it.
+
+**Every aggregate root can be materialised.** EF constructs through a constructor, and an aggregate
+that protects its invariants behind a single validating factory has none EF can use unless one is
+written for it. The failure mode is why this is a test rather than a convention: the build succeeds,
+the migration succeeds, and the first query against that table throws - which on a data plane is a
+scheduled job at 3am rather than a developer at a keyboard. All six pass.
+
+**Every configured entity is exposed as a `DbSet`.** A configuration whose entity has no `DbSet`
+still shapes the table, so nothing looks wrong - but the stores reach their tables through the
+context's properties, so the entity ends up mapped and unusable. This test exists because stage 6
+added two configurations and two `DbSet`s in separate edits, which is exactly the shape of change
+where one of them gets forgotten. Nine configurations, nine `DbSet`s.
 
 ## 4. Architecture changes
 
@@ -553,14 +863,47 @@ A new `Ingestion` namespace was added in stage 3 (`IngestionRequest`, `Ingestion
 `IDataProvider`, `ProviderResponse`, `IProviderCatalogue`, `IProviderRateLimiter`,
 `IngestionParameters`.
 
-**Infrastructure.** Stage 7 added two entity configurations, two `DbSet`s, two stores, the
+Stage 6 added two more: `Observations` (`Observation`, `ObservationId`, `ObservationValue`,
+`ObservationValueKind`) and `Normalization` (`QuarantinedPayload`). Neither re-implements the
+epistemic rules — `Observation` materialises through `Claims`, so `Evidence` remains the only place
+that decides what a fact is.
+
+Stage 8 added a `Freshness` namespace (`FreshnessState`, `FreshnessAssessment`,
+`FreshnessPolicy`) and one method to `ContentHash`: `TryCreate`, for callers reading names they did
+not write - the archive walking its own directories, where an interrupted write leaves a temporary
+file by design and skipping it is the expected path rather than an exception.
+
+**Application.** Stage 6 added a `Normalization` namespace — `INormalizer`,
+`INormalizationPipeline`/`NormalizationPipeline`, `NormalizationInput`, `NormalizationResult`,
+`NormalizationSummary`, `NormalizationParameters` — plus `IObservationStore` and `IQuarantineStore`
+in `Abstractions`.
+
+Stage 8 added a `Freshness` namespace (`IFreshnessReport`/`FreshnessReport`, `SourceFreshness`),
+`IRetentionSweep`/`RetentionSweep` and `RetentionSweepSummary`, `IDataAcquisition`/
+`DataAcquisitionService` and `AcquisitionResult`, and `RetentionEnforcementResult`/`RetentionAction`.
+`IRetentionEnforcer.EnforceAsync` changed return type - see the defect in section 3 - and
+`IRawResponseArchive` gained `EnumerateAsync`.
+
+**Infrastructure.** Stage 6 added `SecEdgarSubmissionsNormalizer`, two entity configurations
+(`ObservationConfiguration`, `QuarantinedPayloadConfiguration`), two stores (`EfObservationStore`,
+`EfQuarantineStore`), two `DbSet`s, and `QuarantinedPayload` to `AppDbContext.IsSeamBookkeeping`.
+`Observation` is deliberately **not** exempt: an observation is something the platform believes,
+and beliefs are precisely what the seam exists to audit.
+
+Stage 8 added `FileSystemRawResponseArchive.EnumerateAsync`, which walks the fan-out directories and
+skips any file whose name is not a content hash.
+
+Stage 7 added two entity configurations, two `DbSet`s, two stores, the
 filesystem archive and `RawArchiveOptions`, and registered `IIngestionGateway` — which stage 5 had
 deliberately left out. Stage 4 added `IngestionRun` to `AppDbContext.IsSeamBookkeeping`. Stage 5
 added an `Ingestion` namespace — `ProviderCatalogue`, `SlidingWindowRateLimiter` and a `Providers`
 folder holding the EDGAR connector, its endpoint builder and its registry definition — plus
-`SecEdgarOptions` and the `AddIngestion`/`AddSecEdgar` registration in `DependencyInjection`. There is deliberately still **no EF configuration for `DataSource`**,
-so `ApplyConfigurationsFromAssembly` does not pick it up and the existing model snapshot has not
-drifted. Persistence of the registry is stage 6/7 work.
+`SecEdgarOptions` and the `AddIngestion`/`AddSecEdgar` registration in `DependencyInjection`.
+
+*Written at stage 5, and since overtaken:* "There is deliberately still no EF configuration for
+`DataSource`, so `ApplyConfigurationsFromAssembly` does not pick it up and the existing model
+snapshot has not drifted. Persistence of the registry is stage 6/7 work." Stage 7 added
+`DataSourceConfiguration` and the `DataSources` set; the registry is persisted.
 
 ## 7. Database changes
 
@@ -580,6 +923,31 @@ When the migration is generated it should be cross-checked against `/tmp`-indepe
 NOT NULL, `cadence_interval` nullable `interval`, `categories` and `artifacts` both `jsonb` NOT
 NULL.
 
+**Stage 6 adds two further tables**, `observations` (15 columns, 3 indexes) and
+`quarantined_payloads` (6 columns, 3 indexes), bringing the pending migration to five tables.
+
+`observations` holds three owned types in one table — subject, value and provenance — and stores
+values as a kind plus one canonical string rather than a column per type. Its indexes are chosen
+for the two questions later phases actually ask: everything known about a subject as at a date, and
+the latest value of one attribute as at a date. **Both filter on `published_at_utc`**, never on the
+period a value describes; filtering on the wrong one produces look-ahead bias that cannot be
+corrected afterwards, because by then the history has been read with the distinction discarded.
+
+`quarantined_payloads` is keyed by `content_hash`, which makes the record idempotent by
+construction rather than by a check that could be forgotten.
+
+Both were derived by hand from their configurations and applied to the same live PostgreSQL 16.13
+instance. Thirteen behavioural checks plus six query plans, all as specified — see the verification
+log. The plan check matters more than usual here: `ix_observations_subject` had to serve the sweep
+case (`subject_identifier IS NULL`) as well as the specific one, because `EfObservationStore`
+deliberately expresses that predicate as `IS NULL` rather than passing a null parameter. SQL's
+`= NULL` is never true, so a single parameterised comparison would have silently returned nothing
+for exactly the subjects that have no identifier. The plan confirms the index is used for both.
+
+**Stage 8 changes no schema.** It reads the ingestion ledger and the source registry through
+contracts that already existed, and the archive it sweeps is on the filesystem. The pending
+migration remains five tables.
+
 ### Historical note
 
 Before stage 7 this section read **"None yet."** for stages 1-5, which was accurate then: the model
@@ -597,7 +965,24 @@ Phase 1 entities.
 
 ## 8. APIs / contracts
 
-None yet. Stage 9.
+Two controllers, added in stage 9. Both are unauthenticated, deliberately and temporarily; until
+that changes the API must not be exposed beyond localhost. See `docs/SECURITY.md`.
+
+**`SourcesController`** (`api/sources`) - the registry. `GET` for the listing and one source;
+`POST {id}/activation` for the one consequential operation, which goes through the seam and can
+answer `200`, `202` (approval required, nothing changed), `403` or `404`.
+
+**`DataPlaneController`** (`api/data-plane`) - read-only status. `freshness`, `freshness/{sourceId}`,
+`runs` and `quarantine`. Page sizes are clamped rather than rejected; the runs listing takes an
+optional `sinceHours` and defaults to a week.
+
+Four DTO shapes cross the boundary - `SourceDto` with a nested `SourceLicensingDto`, `FreshnessDto`,
+`IngestionRunDto`, `QuarantinedPayloadDto` - each mapped from its aggregate rather than serialised
+from it, so a domain refactor is not a breaking API change.
+
+**Configuration contract.** `DataPlane` in `appsettings.json`, validated at start-up:
+`SeedSourcesOnStartup` and `RunRetentionSweep` (both **false** by default),
+`RetentionSweepIntervalMinutes`, `RetentionSweepDelayMinutes` and `RetentionSweepBatchSize`.
 
 ## 9. Security and safety changes
 
@@ -681,13 +1066,34 @@ to accumulate.
 | `tests/AI.Investment.Application.UnitTests/Ingestion/IngestionGatewayTests.cs` | Stage 4. All four gates, the seam, paging, deduplication, and the failure path |
 | `tests/AI.Investment.Application.UnitTests/Ingestion/IngestionTestDoubles.cs` | Stage 4. Six hand-written doubles, no mocking framework |
 | `tests/AI.Investment.Integration.Tests/Ingestion/SecEdgarProviderTests.cs` | Stage 5. CIK normalisation, endpoint mapping, the registry definition, options validation, the rate limiter's sliding window, and duplicate-connector rejection |
+| `tests/AI.Investment.Domain.UnitTests/Observations/ObservationValueTests.cs` | Stage 6. Canonical round-trips for all four kinds, culture invariance, non-UTC and unspecified-kind refusal, wrong-type reads, and every `Restore` refusal including the unknown and unrecognised kinds |
+| `tests/AI.Investment.Domain.UnitTests/Observations/ObservationTests.cs` | Stage 6. Attribute validation, caveat handling, the delegation to `Claims` for both fact-ordering rules, `ToClaim` at each of the four value types, and sweep subjects |
+| `tests/AI.Investment.Domain.UnitTests/Observations/QuarantinedPayloadTests.cs` | Stage 6. Keyed by content hash, rule and reason required, truncation rather than rejection, non-UTC refusal |
+| `tests/AI.Investment.Application.UnitTests/Normalization/NormalizationPipelineTests.cs` | Stage 6. The seam dispatch and its idempotency key, all three refusal statuses, every quarantine rule, and the archive-missing path |
+| `tests/AI.Investment.Application.UnitTests/Normalization/NormalizationTestDoubles.cs` | Stage 6. Three more hand-written doubles |
+| `tests/AI.Investment.Integration.Tests/Normalization/SecEdgarSubmissionsNormalizerTests.cs` | Stage 6. Each field to its attribute, provenance timing and its caveat, four "nothing is invented" cases, and every quarantine path including the one that proves a reason never quotes the payload |
+| `tests/AI.Investment.Domain.UnitTests/Freshness/FreshnessPolicyTests.cs` | Stage 8. Every rule by id, grace, the expectation coming from the source rather than a fixed duration, and clock skew treated as current rather than overdue |
+| `tests/AI.Investment.Application.UnitTests/Freshness/FreshnessReportTests.cs` | Stage 8. Only successful runs counting as a refresh, completion rather than start dating one, inactive sources reported rather than hidden, and the queue ordering |
+| `tests/AI.Investment.Application.UnitTests/Retention/RetentionSweepTests.cs` | Stage 8. Every count, both bounds, and the two failure cases - a poisoned payload not ending the sweep, and an outage not being reported as a policy refusal |
+| `tests/AI.Investment.Application.UnitTests/Ingestion/DataAcquisitionServiceTests.cs` | Stage 8. What it declines to normalise and what it declines to claim |
+| `tests/AI.Investment.Application.UnitTests/Mapping/DataPlaneMapperTests.cs` | Stage 9. Each DTO's fields, and the three that exist to prevent a specific misreading - permissions crossing individually, an absent retention limit staying null, a refusal carrying its rule |
+| `tests/AI.Investment.Api.Tests/DataPlaneEndpointTests.cs` | Stage 9. Every route exists; a malformed id is a 400 before the registry is touched; page sizes clamp; the host starts with both hosted services registered |
+| `tests/AI.Investment.Architecture.Tests/DataPlaneRuleTests.cs` | Stage 10. Seven structural invariants: the network reachable in one layer only, connectors and normalisers confined to Infrastructure, scheduling kept out of the inner layers, no logging in the domain, every enum naming its default, every aggregate materialisable, every configured entity exposed |
 
 `tests/.../Evidence/ClaimTests.cs` was updated for the new `Provenance` shape — its fixture
 previously used `"sec-edgar:0000320193-26-000001"`, which is exactly the fused value stage 2
 removed.
 
-Stage 2 added **87** executable cases, stage 3 **37**, stage 4 **43**, stage 5 **31**, and retention
-**31**. The solution has gone from 189 to **418**. **None has been executed.** See section 12.
+The solution now holds **635** executable cases, up from 189 before this phase. **None has been
+executed.** See section 12.
+
+That total is counted mechanically - every `[Fact]`, plus one per `[InlineData]` row, across
+`tests/`; there is no `[MemberData]` or `[ClassData]` in the solution, so the count is exact rather
+than an estimate. The per-stage figures recorded in the verification log are hand tallies made as
+each stage was written, and summing them gave 638. The mechanical count is the correct one, and
+the discrepancy is left visible here rather than quietly reconciled: a number arrived at by adding
+up remembered figures is exactly the kind of claim this project's documentation rule exists to
+stop.
 
 The EDGAR tests deliberately **do not make an HTTP request**. Hitting the SEC from a test suite
 would consume somebody's fair-access quota on every CI run — precisely the behaviour this connector
@@ -699,6 +1105,22 @@ Two assertions recur through the gateway tests and carry most of their weight: `
 which says the network was never touched, and a recorded run naming the rule, which says the
 refusal was written down. A gate that stops a request but leaves no trace turns a compliance
 decision into an unexplained absence of data, so both halves are asserted every time.
+
+The normaliser tests are weighted deliberately towards the negative cases. Roughly half assert
+that something did *not* happen: a missing field produced no observation, a wrongly typed field
+produced no observation, an overlong value cost only its own observation rather than the document,
+and a quarantine reason contained no fragment of the payload that caused it. A normaliser is easy
+to test on a well-formed document and that is not where the risk is — a fabricated value with real
+provenance is indistinguishable from a true one, so the tests that matter are the ones proving
+nothing was invented.
+
+The endpoint tests deserve a note on what they can and cannot prove. No database is reachable from
+the API test host, so they assert two narrow things: that a malformed identifier is rejected
+*before* anything reaches the registry - a 400 where a query would have produced a 500 is the proof
+- and that every route exists and handles a failed read rather than letting it escape. One of them
+proves something about start-up as a side effect: the host boots at all with both hosted services
+registered, which it would not if either had defaulted to enabled and reached for the unreachable
+database.
 
 The `ContentHash` tests deserve a note on method: they assert against the *published* SHA-256
 digests of the empty string and `"abc"`, not against the implementation's own output. A hash
@@ -724,7 +1146,7 @@ The structural check is a weak instrument and is recorded as such: it catches gr
 proves nothing about type correctness. It is not a substitute for a compiler and is not offered
 as one.
 
-Static verification actually executed, across the whole solution (163 files, 46 namespaces, 194
+Static verification actually executed, across the whole solution (247 files, 70 namespaces, 304
 top-level types):
 
 | Check | Result |
@@ -735,13 +1157,17 @@ top-level types):
 | Dependency direction: Domain references nothing; Application references no Infrastructure or Api | **PASS** |
 | Duplicate type names within a namespace | **PASS** — the only two hits are generic-arity pairs (`PagedResult`/`PagedResult<T>`, `Claim`/`Claim<T>`) |
 | Stray `.cs` outside `src/` and `tests/` | **PASS** — none |
-| Interface members implemented by every implementer | **PASS** for all six new ingestion doubles |
+| Interface members implemented by every implementer | **PASS** — 51 implementations across 31 interfaces; the six reported are all expression-bodied properties the scanner cannot see |
 | Non-ASCII characters anywhere in `src/` or `tests/` | **PASS** — none |
 | EF model snapshot drift | **PASS** — still exactly the four Phase 1 entities |
-| Service-graph review: every registered service's dependencies are registered | **PASS** — `IngestionGateway`'s seven dependencies all resolve, lifetimes compatible (scoped depending on scoped and singleton) |
+| Service-graph review: every registered service's dependencies are registered | **PASS** — `IngestionGateway`'s seven, `NormalizationPipeline`'s six, stage 8's three services and stage 9's two hosted services and two controllers all resolve; both hosted services take `IServiceScopeFactory` rather than capturing a scoped service in a singleton |
+| Configuration validity | **PASS** — both `appsettings` files parse; every `DataPlane` value is inside its declared range |
 | Stage 7 schema against live PostgreSQL 16.13 | **PASS** — 2 tables, 38 columns, 5 indexes created; 12 behavioural checks all as specified |
 | Retention schema against live PostgreSQL 16.13 | **PASS** — `unreplayable_evidence` created; duplicate marker and null reason both rejected |
 | The reference-index `jsonb` containment query, against real rows | **PASS** — finds a run holding the hash, returns false for one nothing references |
+| Stage 6 schema against live PostgreSQL 16.13 | **PASS** — `observations` and `quarantined_payloads` created; 13 behavioural checks all as specified |
+| Stage 6 index usability, by query plan | **PASS** — all six declared indexes serve their intended reads, including `ix_observations_subject` under `subject_identifier IS NULL` |
+| Owned-type constructor binding, by inspection | **PASS** — `Provenance`, `IngestionSubject` and `ObservationValue` each have a private constructor whose parameter names match their property names exactly, which is what EF binds on |
 | `dotnet ef migrations add` | **PENDING LOCAL VERIFICATION** — requires the SDK |
 
 These are real checks with real results, and they are also the ceiling of what can be established
@@ -752,9 +1178,12 @@ Stage 1 was chosen deliberately as work that a Phase 1 runtime defect could not 
 **purely additive** for that reason: it modifies no existing type, so a Phase 1 or stage 2 build
 failure cannot cascade into it.
 
-**Stage 5 is where implementation stops without input.** It needs real provider access —
-credentials and licence terms — which is a commercial and legal decision rather than an
-implementation one. See section 18.
+*Written at stage 5:* "**Stage 5 is where implementation stops without input.** It needs real
+provider access — credentials and licence terms — which is a commercial and legal decision rather
+than an implementation one." That turned out to be wrong about where implementation stops, and the
+reason is worth keeping: EDGAR needs no credentials, only a declared contact address, so stages 6
+to 10 were all buildable without a commercial decision. **Implementation now stops at the compiler**
+— see the environment blocker below and in section 18.
 
 ## 13. Known limitations
 
@@ -769,25 +1198,78 @@ implementation one. See section 18.
   done at stage 2 for that reason.
 - **Nothing yet verifies that a claim's origin is actually registered.** `Provenance` guarantees
   the identifier is *well formed*, not that a source with that id exists or is admissible.
-  Enforcing that needs the registry persisted and is stage 6/7 work; `ISourceRegistry` and
-  `SourceAdmission` are the pieces it will be assembled from.
+  The registry is persisted as of stage 7 and `RetentionEnforcer` already resolves a payload's
+  source through it, but nothing checks an *observation's* provenance against the registry when it
+  is recorded. `ISourceRegistry` and `SourceAdmission` are the pieces it would be assembled from.
 - ~~**`SourceAdmission` is not yet called by anything.**~~ *Resolved in stage 4* — it is gate 2 of
   the ingestion gateway.
 - ~~**No connector exists.**~~ *Resolved in stage 5* — SEC EDGAR.
 - ~~**Ingestion cannot yet run end to end.**~~ *Resolved in stage 7* — the gateway is registered
   and every dependency resolves. It has still never been executed.
-- **Nothing can put a source into the registry.** `ISourceRegistry.Add` exists and registering a
-  source is correctly a seam-gated side effect, but no command or endpoint calls it, so the
-  registry starts empty and every ingestion run refuses with `ingestion.source-registered@1`. A
-  registration command is the first item of the API stage.
+- ~~**Nothing can put a source into the registry.**~~ *Resolved* — `RegisterKnownSourcesHandler`
+  and `ActivateSourceHandler`.
+- ~~**Nothing calls the seeding handler at start-up.**~~ *Resolved in stage 9* —
+  `SourceSeedingHostedService`, off by default and on in Development.
 - ~~**The archive never deletes.**~~ *Resolved* — Option C implemented; see section 3.
-- **Nothing sweeps the archive.** `IRetentionEnforcer` decides per payload; the recurring job that
-  walks the archive is stage 8, so no retention deletion happens on its own yet.
+- ~~**Nothing sweeps the archive.**~~ *Resolved in stage 8* — `RetentionSweep`. Nothing *calls* it
+  on a schedule yet, which is the next item.
+- ~~**No scheduler runs anything.**~~ *Partly resolved in stage 9.* Seeding and the retention sweep
+  now have hosted services. **`DataAcquisitionService` still has no caller** — nothing fetches on a
+  schedule or on request, because deciding *what* to fetch needs the watchlist described below. An
+  operator can activate a source and see it reported as overdue forever.
+- **No `POST` triggers an ingestion.** The read surface is complete; the one write endpoint is
+  activation. An acquisition endpoint is easy to add and was deliberately not added, because it
+  would need a subject in the request body and that shape should be settled alongside the watchlist
+  rather than guessed now and migrated later.
+- **Nothing decides *which subject* to refresh.** `FreshnessReport` says a source is overdue; an
+  `IngestionRequest` needs a subject, and for EDGAR that means a CIK. There is no watchlist, so the
+  gap between "this source is behind" and "fetch these companies" is not bridged. Inventing a
+  watchlist in a corner of the scheduler would be the wrong place for it — it is a real
+  architectural piece and should be designed as one, which is why the planner deliberately stops at
+  the source level rather than guessing a subject.
+- **Freshness is per source, not per subject.** A source refreshed for one company reads as current
+  for all of them. That is the honest reading of what the ingestion ledger records today, and
+  making it per subject means indexing runs by subject — worth doing once a watchlist exists to
+  make it meaningful.
 - **Claims are still not persisted**, so `IPayloadReferenceIndex` consults ingestion runs only. The
   interface does not change when claims arrive — it becomes a union of two queries.
 - **EDGAR takes CIKs, not tickers.** Nothing yet resolves a ticker to a CIK, so ingestion for a
   company needs its CIK supplied. EDGAR publishes a ticker-to-CIK mapping; wiring it in is small
-  and belongs with normalisation.
+  and belongs with normalisation. Stage 6 records `company.ticker` as an observation, which is the
+  raw material for that resolver but is not one.
+- ~~**Nothing calls the normalisation pipeline.**~~ *Resolved in stage 8* —
+  `DataAcquisitionService` chains ingestion to normalisation. It has no scheduled caller; see above.
+- **One normaliser exists, for one category.** `SecEdgarSubmissionsNormalizer` reads company
+  profiles. EDGAR's filing history and XBRL facts are archived by the same connector and have no
+  normaliser, so a run for `RegulatoryFilings` or `FinancialStatements` quarantines under
+  `normalization.no-normalizer@1` — recorded and re-readable, but not yet knowledge.
+- **The EDGAR submissions document has no publication date**, so every observation from it carries
+  the retrieval time in all three provenance slots and a caveat saying that date is a floor. This
+  is honest but lossy: a fact that became true months earlier is dated to when the platform first
+  looked. Filings carry real dates and will not have this problem; company profiles genuinely do
+  not, and nothing can recover a date the source never stated.
+- **Nothing reads the quarantine queue.** `IQuarantineStore.GetRecentAsync` exists and is the
+  operator's queue; no endpoint or alert surfaces it, so a source that silently changed schema
+  would accumulate records nobody sees until stage 9.
+- **A store's `SaveChanges` commits everything pending on the context, not only its own entity.**
+  This is a property of the existing store pattern rather than something stage 6 introduced —
+  `EfIngestionRunStore` has the same shape — and it is safe as currently called, because the
+  pipeline quarantines before it dispatches and adds observations immediately before saving them.
+  It is written down because it is the kind of coupling that stops being safe when a second caller
+  appears, and the fix (a narrower unit of work per store) should be a deliberate change rather
+  than a discovery.
+- **Observations are never superseded, only added to.** That is the intended design — a later
+  contradicting value is a new row, which is what makes point-in-time reads possible — but it means
+  the table grows without bound and nothing yet compacts, tiers or archives it. Retention covers
+  raw payloads, not derived observations.
+- **The retention sweep's ordering is unspecified.** It walks the archive in whatever order the
+  filesystem yields, so a bounded sweep on a large archive examines an arbitrary subset rather than
+  the oldest payloads first. Correct but inefficient: a payload past its limit may wait several
+  sweeps. Ordering by retrieval time needs an index the filesystem archive does not have.
+- **A sweep's failures are counted but not described.** `RetentionSweepSummary.Failed` says how
+  many payloads threw, not why. There is no logging abstraction in the Application layer to carry
+  the reason, and adding one is an observability decision that belongs with stage 9 rather than
+  being made in passing here.
 - **The rate limiter is per-process.** Two instances would each keep to the quota and together
   exceed it. Correct for the single-instance deployment this is, and stated in the type itself.
 - **Only regulatory and fundamental data has a source.** Market prices, news and macroeconomic
@@ -799,7 +1281,20 @@ implementation one. See section 18.
   finally *writable* — but it needs the migration applied, so it waits on that.
 - **No integration test covers the new mappings.** Owned types, converters and shadow properties
   are the parts most likely to be subtly wrong, and only a real round-trip proves them. That test
-  belongs with the migration.
+  belongs with the migration. `observations` raises the stakes: it carries three owned types in one
+  table, and the constructor-binding check done by inspection in stage 6 is a weaker instrument
+  than a materialisation.
+- **The API is still unauthenticated.** Stage 9 added a registry-mutating endpoint (activation) and
+  three listings that expose licensing terms and operational state. None of it is authenticated,
+  which was already true of the companies endpoints and is now true of more surface. The instruction
+  in `docs/SECURITY.md` stands and matters more than it did: do not expose this API beyond
+  localhost.
+- **The retention sweep has no distributed lock.** `RunRetentionSweep` is an instruction, not a
+  guarantee. Two instances with it enabled cannot double-delete - the seam deduplicates on content
+  hash - but they would consume approval slots and audit rows discovering that. A lock belongs with
+  whatever runs this in more than one place.
+- **A sweep's failures are logged, not surfaced.** `RetentionSweepSummary.Failed` reaches the log
+  and no endpoint. An operator watching only the API would not see a sweep failing every night.
 - **`SourceRanking` does not resolve conflicts**, by design. Something must, eventually.
 - **The registry is not persisted**, so it currently exists only for the lifetime of a process.
 - **No freshness monitoring.** `UpdateCadence.IsOverdue` exists but nothing calls it; there is no
@@ -1016,15 +1511,34 @@ refusal path for claim-referenced payloads. **No code assumes any answer yet.**
 
 ### Then, in order
 
-1. **Generate and validate the migration** (below) — the largest remaining gap.
-2. **A source-registration command**, routed through the seam under
-   `Capability.ReferenceDataManagement`, plus seeding the EDGAR definition. Until this exists the
-   registry is empty and every run refuses. Nominally stage 9, but it is what makes stage 7
-   demonstrable.
-3. **Stage 6 — normalisation and validation.** It now has archived bytes to read.
-4. **Stage 8 — freshness and data events**, which `GetLatestForSourceAsync` and
-   `UpdateCadence.IsOverdue` were built for.
-5. **Stages 9 and 10** — API surface, observability, and architecture tests for the data plane.
+Items 2 to 5 of the original list — source registration, stage 6, stage 8, stages 9 and 10 — are
+**done**. The list is kept for the record; what remains is below it.
+
+1. ~~Generate and validate the migration~~ — **still the largest remaining gap**, and now the only
+   thing standing between this phase and its exit criterion. See the verification batch below.
+2. ~~A source-registration command~~ — *done*: `RegisterKnownSourcesHandler`, plus
+   `SourceSeedingHostedService` to call it.
+3. ~~Stage 6 — normalisation and validation~~ — *done*.
+4. ~~Stage 8 — freshness and data events~~ — *done*.
+5. ~~Stages 9 and 10~~ — *done*: two controllers, two hosted services, seven architecture rules.
+
+### What comes after the gates pass
+
+1. **A watchlist.** The largest remaining *architectural* gap, and the reason the data plane still
+   does not fetch anything on its own. `FreshnessReport` can say a source is overdue; an
+   `IngestionRequest` needs a subject, and for EDGAR that means a CIK. Nothing decides which
+   companies to follow. This was deliberately not invented in a corner of the scheduler — it is a
+   real piece of the domain and deserves designing as one, and it is what makes
+   `DataAcquisitionService` reachable.
+2. **A ticker-to-CIK resolver**, which the watchlist needs and which EDGAR publishes as a
+   downloadable mapping. Stage 6 already records `company.ticker` as an observation, which is the
+   raw material rather than the resolver.
+3. **Normalisers for filings and XBRL facts.** The EDGAR connector already archives both; neither
+   has a normaliser, so a run for those categories quarantines under
+   `normalization.no-normalizer@1` — recorded and re-readable, but not yet knowledge.
+4. **Authentication.** Stage 9 added a registry-mutating endpoint and three listings that expose
+   licensing terms and operational state. Until real authentication exists the instruction in
+   `docs/SECURITY.md` stands and now matters more: do not expose this API beyond localhost.
 
 ### Verification batch
 
@@ -1041,11 +1555,37 @@ The migration step is the one that exercises the new mappings — owned types, c
 shadow property are where an EF configuration written without a compiler is most likely to be
 wrong, and `migrations add` is what surfaces that.
 
+**What the migration should produce.** Five tables, cross-checkable without reading the diff:
+
+| Table | Columns | Indexes |
+|---|---|---|
+| `data_sources` | 21 | 2 |
+| `ingestion_runs` | 17 | 3 |
+| `unreplayable_evidence` | 5 | 2 |
+| `observations` | 15 | 3 |
+| `quarantined_payloads` | 6 | 3 |
+
+`observations` is the one to read carefully: it carries three owned types in one table — subject,
+value and provenance — and its indexes must include `ix_observations_subject` over
+`(subject_kind, subject_identifier)`. That composite is what `EfObservationStore` relies on for
+both the specific and the sweep case, and the sweep case was proven against live PostgreSQL to use
+it under `IS NULL`.
+
+**Where the build is most likely to fail first**, in order of my own confidence: the owned-type
+configurations in `ObservationConfiguration` (three owned types, indexes declared inside their
+`OwnsOne` builders), then the collection expressions and `IAsyncEnumerable` iterators added in
+stage 8, then the two new controllers. Everything has been read against the compiler's rules by
+hand and none of it has been compiled.
+
 ### Still outstanding before Phase 2 can close
 
-- The build, test and migration gates, none of which has ever run.
+- **The build, test and migration gates, none of which has ever run.** This is the whole of what
+  separates "code complete" from "verified", and it is the one thing this environment cannot do —
+  see section 12 for the blocker.
+- A watchlist and a ticker-to-CIK resolver, without which nothing fetches on its own.
 - Provider slots for market data, news and macroeconomic series — one registration each, no
   architecture change.
 - The Phase 2 exit criterion: *"50 tickers ingested with full provenance, and any analysis replays
-  byte-identically from stored raw responses."* Reachable with EDGAR alone once the migration lands
-  and a source can be registered.
+  byte-identically from stored raw responses."* Every piece it needs now exists in code — registry,
+  connector, archive, ledger, normalisation, observations with provenance. What it needs next is
+  the migration, a green test run, and a watchlist to name the 50.

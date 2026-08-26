@@ -1,10 +1,12 @@
 using AI.Investment.Application.Abstractions;
 using AI.Investment.Application.Ingestion;
+using AI.Investment.Application.Normalization;
 using AI.Investment.Infrastructure.Actions;
 using AI.Investment.Infrastructure.Auditing;
 using AI.Investment.Infrastructure.Configuration;
 using AI.Investment.Infrastructure.Ingestion;
 using AI.Investment.Infrastructure.Ingestion.Providers;
+using AI.Investment.Infrastructure.Normalization;
 using AI.Investment.Infrastructure.Persistence;
 using AI.Investment.Infrastructure.Persistence.Repositories;
 using AI.Investment.Infrastructure.Policy;
@@ -104,6 +106,8 @@ public static class DependencyInjection
         services.AddScoped<IIngestionRunStore, EfIngestionRunStore>();
         services.AddScoped<IUnreplayableEvidenceStore, EfUnreplayableEvidenceStore>();
         services.AddScoped<IPayloadReferenceIndex, EfPayloadReferenceIndex>();
+        services.AddScoped<IObservationStore, EfObservationStore>();
+        services.AddScoped<IQuarantineStore, EfQuarantineStore>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<IDatabaseConnectivityProbe, DatabaseConnectivityProbe>();
     }
@@ -149,6 +153,29 @@ public static class DependencyInjection
         // registration would have failed the whole host's start-up rather than leaving one feature
         // absent. All five now exist.
         AddSecEdgar(services, configuration);
+        AddNormalizers(services);
+    }
+
+    /// <summary>Registers the normalisers that read archived payloads.</summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately unconditional, and deliberately not inside a connector's registration. A
+    /// normaliser reads bytes that are already in the archive; whether the connector that fetched
+    /// them is currently enabled has nothing to do with whether they can still be read. Tying the
+    /// two together would mean that turning EDGAR off quarantined every payload it had ever
+    /// retrieved, under a rule saying no normaliser existed - which would be false.
+    /// </para>
+    /// <para>
+    /// Singletons: a normaliser is a pure function from bytes to observations and holds no state.
+    /// </para>
+    /// <para>
+    /// The pipeline resolves <c>IEnumerable&lt;INormalizer&gt;</c> and asks each whether it reads a
+    /// given source and category, so a new normaliser is one line here and nothing else.
+    /// </para>
+    /// </remarks>
+    private static void AddNormalizers(IServiceCollection services)
+    {
+        services.AddSingleton<INormalizer, SecEdgarSubmissionsNormalizer>();
     }
 
     private static void AddSecEdgar(IServiceCollection services, IConfiguration configuration)
@@ -180,6 +207,12 @@ public static class DependencyInjection
             });
 
         services.AddTransient<IDataProvider>(provider => provider.GetRequiredService<SecEdgarProvider>());
+
+        // The connector also knows its source's authority, licensing, coverage and cadence, so it
+        // ships the registry definition rather than leaving an operator to re-type a regulator's
+        // terms and get one of them subtly wrong. Registered inactive; seeding registers, an
+        // operator activates.
+        services.AddSingleton<ISourceDefinition, SecEdgarSource>();
     }
 
     private static void AddSafety(IServiceCollection services)

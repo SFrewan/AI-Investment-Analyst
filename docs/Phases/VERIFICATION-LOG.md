@@ -467,14 +467,288 @@ rather than an assumption.
 
 ---
 
+## 2026-08-25 — Source registration implemented
+
+**PENDING LOCAL VERIFICATION** for build and test.
+
+**Added** — `ISourceDefinition`; `RegisterKnownSourcesHandler`, `ActivateSourceHandler` and their
+parameters and results; `SecEdgarSource` converted from a static class to a sealed class
+implementing `ISourceDefinition`; both handlers and the definition registered.
+
+EDGAR's definition now states `RetentionLimit.Unlimited` explicitly rather than defaulting to it,
+so the registry records a fact about the licence instead of the absence of a decision.
+
+**Design notes.** One proposal per source, not one for the batch — a refusal of one must not take
+the others with it, and the audit trail should name the source admitted. Existing registry entries
+are left untouched, because an operator may have re-licensed or deactivated one and start-up
+seeding must not undo that. Seeding uses its own `CorrelationId` rather than `ICorrelationContext`:
+it runs outside any request, and the HTTP implementation would have nothing to give it.
+
+**Static verification:** 198 files, 56 namespaces, 243 types — brace balance, namespace/folder,
+using resolution, dependency direction, duplicate types, stray files, interface completeness and
+non-ASCII all **PASS**.
+
+**Test counts.** 11 new executable cases. Solution total **429**. **None executed.**
+
+---
+
+## 2026-08-26 — Stage 6: normalisation and validation
+
+**PENDING LOCAL VERIFICATION** for build and test.
+
+**Added** — Domain: `Observation`, `ObservationId`, `ObservationValue`, `ObservationValueKind`,
+`QuarantinedPayload`. Application: `INormalizer`, `INormalizationPipeline`/`NormalizationPipeline`,
+`NormalizationInput`, `NormalizationResult`, `NormalizationSummary`, `NormalizationParameters`,
+`IObservationStore`, `IQuarantineStore`. Infrastructure: `SecEdgarSubmissionsNormalizer`,
+`ObservationConfiguration`, `QuarantinedPayloadConfiguration`, `EfObservationStore`,
+`EfQuarantineStore`, two `DbSet`s, and four registrations.
+
+**Changed** — `AppDbContext.IsSeamBookkeeping` now exempts `QuarantinedPayload` as a fifth type.
+`Observation` is deliberately not exempt.
+
+**Design notes.** Observations go through the seam because an observation is something the platform
+believes; quarantine records do not, because a policy denial is one of the things worth
+quarantining a run over and the record must be writable when nothing is authorised. Normalisers are
+registered unconditionally rather than inside a connector's registration: disabling EDGAR must not
+make the payloads it already fetched unreadable.
+
+**Defects found and fixed during this stage.**
+
+1. `ObservationConfiguration` declared indexes on owned-type properties from the *owner's* builder,
+   which EF rejects. Moved inside their `OwnsOne` blocks.
+2. Two em dashes had reached `ObservationConfiguration`'s XML docs. Removed; the repo-wide
+   non-ASCII scan is clean again.
+
+**Static verification:** 222 files, 63 namespaces, 270 types — brace balance, namespace/folder,
+using resolution, dependency direction, duplicate types, stray files, interface completeness and
+non-ASCII all **PASS**. Service-graph review: `NormalizationPipeline`'s six dependencies all
+resolve, lifetimes compatible.
+
+**Owned-type constructor binding, by inspection.** `Provenance`, `IngestionSubject` and
+`ObservationValue` each expose a private constructor whose parameter names match their property
+names exactly, which is what EF binds on. `AggregateRoot<TId>` has a protected parameterless
+constructor, so both new aggregates can be materialised. This is inspection, not a round-trip, and
+is recorded as the weaker instrument it is.
+
+**Live PostgreSQL 16.13 validation.** Schema hand-derived from both configurations and applied to
+the same instance used in stage 7. `observations` (15 columns, 3 indexes) and
+`quarantined_payloads` (6 columns, 3 indexes) created without error.
+
+Thirteen behavioural checks, all as specified:
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `subject_identifier = NULL` matches nothing | 0 rows, as SQL requires |
+| 2 | `subject_identifier IS NULL` finds the sweep subject | 1 row |
+| 3 | Point-in-time read as at 2026-04-01 returns the earlier name | `Apple Inc.` |
+| 4 | The same read as at 2026-07-01 returns the later one | `Apple Incorporated` |
+| 5 | Both names still exist; history is not overwritten | 2 rows |
+| 6 | `caveats` round-trips as a jsonb array | length 1, element intact |
+| 7 | `confidence numeric(5,4)` stores 0.8750 and rejects 10.0 | stored; overflow rejected |
+| 8 | An attribute over 120 characters is rejected, not truncated | rejected |
+| 9 | A value over 4000 characters is rejected | rejected |
+| 10 | The same content hash cannot be quarantined twice | duplicate key rejected |
+| 11 | A quarantine with no reason is rejected | not-null violation |
+| 12 | The operator queue reads newest first | correct order |
+| 13 | Timestamps come back as UTC | `+00` |
+
+Every failure above is the assertion, not an accident: checks 7-11 pass *because* the database
+refused the write.
+
+**Index usability, by query plan** (with `enable_seqscan = off`, since the row counts are too small
+for the planner to choose an index on merit — the question is whether the index *can* serve the
+predicate, not whether it would today):
+
+| Query | Plan |
+|---|---|
+| Subject lookup, specific identifier | Index Scan using `ix_observations_subject` |
+| Subject lookup, `IS NULL` | Index Scan using `ix_observations_subject` |
+| Attribute lookup | Index Scan using `ix_observations_attribute` |
+| `published_at_utc <= X` | Bitmap Index Scan on `ix_observations_published_at_utc` |
+| Quarantine queue, newest first | Index Scan Backward on `ix_quarantined_payloads_quarantined_at_utc` |
+| Quarantine existence by hash | Index Only Scan using `PK_quarantined_payloads` |
+
+The second row is the one worth having. `EfObservationStore` expresses the sweep case as `IS NULL`
+rather than passing a null parameter, precisely because `= NULL` is never true in SQL and a single
+parameterised comparison would have returned nothing for exactly the subjects that have no
+identifier. Check 1 proves the trap is real and this plan proves the chosen expression still uses
+the index.
+
+**Test counts.** 113 new executable cases. Solution total **542**. **None executed.**
+
+---
+
+## 2026-08-26 — Stage 8: freshness, data events, and the retention sweep
+
+**PENDING LOCAL VERIFICATION** for build and test.
+
+**Added** — Domain: `FreshnessState`, `FreshnessAssessment`, `FreshnessPolicy`, and
+`ContentHash.TryCreate`. Application: `IFreshnessReport`/`FreshnessReport`/`SourceFreshness`,
+`IRetentionSweep`/`RetentionSweep`/`RetentionSweepSummary`, `IDataAcquisition`/
+`DataAcquisitionService`/`AcquisitionResult`, `RetentionEnforcementResult`/`RetentionAction`.
+Infrastructure: `FileSystemRawResponseArchive.EnumerateAsync`. Three new registrations.
+
+**Changed** — `IRawResponseArchive` gained `EnumerateAsync`; `IRetentionEnforcer.EnforceAsync`
+changed its return type. No schema change.
+
+**Defect found and fixed during this stage.**
+
+`IRetentionEnforcer` returned only the `RetentionDecision` — what a licence *requires* — and
+discarded the outcome of the seam dispatch that was supposed to carry it out. Retention deletion
+declares itself irreversible, so `policy.irreversible-requires-approval@1` applies and an
+installation that has not granted `AllowIrreversibleAutoExecute` for `Capability.DataRetention`
+gets an approval requirement on every payload by design. The enforcer therefore knew that nothing
+had been deleted and threw that fact away.
+
+Nothing had called it yet, so nothing was wrong in production — but the sweep being built on top of
+it would have reported discharged obligations for payloads still on disk, which is a compliance
+statement nothing observed. Fixed by returning `RetentionEnforcementResult`, carrying both the
+obligation and what came of it. The nine existing enforcer tests were updated and three new cases
+added covering denial, approval-required and duplicate suppression.
+
+**A second, related decision.** `RetentionSweep` counts refusals and failures separately rather
+than folding both into "not deleted". Counting a thrown exception as a policy refusal would let a
+database outage report as thousands of payloads that policy declined to delete. One poisoned
+payload does not end a sweep — a sweep that died on the same entry every time would block the
+obligation permanently — but it is counted as a failure, not disguised as a decision.
+
+**Design notes.** `FreshnessPolicy` is the one gate in the platform that fails *towards* action.
+Everywhere else uncertainty guards an irreversible act and must deny; here wrongly refreshing costs
+one request while wrongly reporting stale data as current corrupts every decision made downstream.
+The reversible mistake is the one to make, and the asymmetry is documented on the type and asserted
+in the tests.
+
+`FreshnessReport` reads only *successful* runs. A source refused fifty times running has not been
+refreshed, and reading the latest run of any outcome would report it as current — precisely the
+failure the report exists to catch. Freshness is dated from completion rather than start, for the
+same class of reason.
+
+**Static verification:** 236 files, 67 namespaces, 288 types — brace balance, namespace/folder,
+using resolution, dependency direction, duplicate types, stray files, interface completeness and
+non-ASCII all **PASS**. 51 implementations across 31 interfaces checked; the six reported are the
+known expression-bodied-property false positives, unchanged from previous stages.
+
+**Service-graph review:** `RetentionSweep` (2 dependencies), `DataAcquisitionService` (2) and
+`FreshnessReport` (3) all resolve; every dependency is registered and no scoped service is captured
+by a singleton.
+
+**No database validation this stage**, because there is no schema change. Stated rather than
+omitted: a stage that quietly skipped a gate would be indistinguishable from one that failed it.
+
+**Test counts.** 55 new executable cases. Solution total **597**. **None executed.**
+
+---
+
+## 2026-08-26 — Stage 9: the API surface and the missing callers
+
+**PENDING LOCAL VERIFICATION** for build and test.
+
+**Added** — Api: `DataPlaneOptions`, `SourceSeedingHostedService`, `RetentionSweepHostedService`,
+`SourcesController`, `DataPlaneController`, and a `DataPlane` section in both `appsettings` files.
+Application: `SourceDto`/`SourceLicensingDto`/`SourceMapper`, `FreshnessDto`/`FreshnessMapper`,
+`IngestionRunDto`/`QuarantinedPayloadDto`/`IngestionMapper`.
+
+**Changed** — `Program.ConfigureServices` registers the two hosted services and validates
+`DataPlaneOptions` at start-up. No schema change.
+
+**What this stage is actually for.** Every stage before it built something correct that nothing
+invoked. The registry could be seeded and was not; the sweep could run and did not. Both now have
+callers, and both are **off by default** - the sweep because it is the only activity that destroys
+evidence, seeding because writing to a database at start-up should be a decision rather than a
+default. Development enables seeding and still not the sweep.
+
+**Three decisions made during self-review, before any of it could be compiled.**
+
+1. **Method-group conversions on overloaded mappers were replaced with explicit lambdas.**
+   `SourceMapper.ToDto` and `IngestionMapper.ToDto` are each overloaded, and inferring `Select`'s
+   result type from an overloaded method group is at the edge of what C# type inference guarantees.
+   With no compiler available, the version that cannot be argued about is the right one.
+2. **`TimeSpan` options became integer minutes.** `RangeAttribute` over `TimeSpan` relies on a type
+   converter, and - more importantly - a duration in JSON invites `"24:00:00"`, which is not a
+   parseable timespan at all: the hours component may not exceed 23, so the obvious way to write one
+   day throws. This was caught in the first draft of `appsettings.json` and would have been a
+   start-up failure. An integer has one reading.
+3. **A helper that allocated a discarded `OkResult`** on its success path was rewritten to return
+   the problem or null.
+
+**Design notes.** A malformed source identifier is a `400`, not a `404`: telling a caller that their
+well-formed id does not exist is a different and untrue statement, and one that sends them looking
+in the registry rather than at what they sent. An out-of-range page size is clamped rather than
+rejected, because a dashboard sending whatever its config says should get a bounded page, not an
+error.
+
+Every listing is read-only and deliberately outside the seam. The seam gates side effects; asking a
+question is not one, and auditing reads would bury the record of what changed under a record of who
+looked.
+
+**Static verification:** 246 files, 70 namespaces, 303 types — brace balance, namespace/folder,
+using resolution, dependency direction, duplicate types, stray files, interface completeness and
+non-ASCII all **PASS**. Both `appsettings` files parse as JSON and every `DataPlane` value is inside
+its declared range.
+
+**Service-graph review:** both hosted services take `IServiceScopeFactory` rather than capturing a
+scoped service in a singleton, and resolve their scoped collaborators inside a created scope. Both
+controllers' dependencies are registered. Nothing outside `Program.cs` references an Infrastructure
+type, so the existing architecture test still holds.
+
+**No database validation this stage**, because there is no schema change.
+
+**Test counts.** 34 new executable cases. Solution total **631**. **None executed.**
+
+---
+
+## 2026-08-26 — Stage 10: the data plane's invariants as tests
+
+**PENDING LOCAL VERIFICATION** for build and test.
+
+**Added** — `tests/AI.Investment.Architecture.Tests/DataPlaneRuleTests.cs`, seven structural
+assertions. No production code changed.
+
+**What each one protects, and what it was checked against by hand before being written:**
+
+| Rule | Verified by inspection |
+|---|---|
+| Domain and Application cannot reach the network | No `System.Net`, `HttpClient` or socket reference in either tree |
+| Connectors and normalisers live only in Infrastructure | `SecEdgarProvider` and `SecEdgarSubmissionsNormalizer` are the only implementations, both in Infrastructure |
+| Domain and Application do not schedule themselves | No `Microsoft.Extensions.Hosting` or timer reference; the Application csproj references only DI abstractions |
+| The domain does not log | No `Microsoft.Extensions.Logging`, Serilog or `Console` reference in Domain |
+| Every enum names its default | All **26** enums across Domain and Application declare an explicit `= 0` member |
+| Every aggregate root is materialisable | All **6** (`Company`, `DataSource`, `IngestionRun`, `UnreplayableEvidence`, `Observation`, `QuarantinedPayload`) have a private parameterless constructor |
+| Every configured entity is exposed as a `DbSet` | **9** configurations, **9** `DbSet`s, matched one to one |
+
+Each was confirmed against the repository before the assertion was written, so these are tests that
+encode a property already established rather than tests hoped to pass. That distinction matters
+here more than usual: with no compiler available, a test written blind and expected to go green is
+a guess, and a guess in a file named after architecture rules is worse than no file.
+
+**A note on what the enum rule deliberately does not say.** It asserts that zero belongs to a named
+member, not which member. The right answer differs by type: most choose the unknown or safe case,
+while `RetentionOutcome.Retain` is zero precisely because there the irreversible operation is the
+deletion. Worth recording that the audit also surfaced `ReversibilityClass.Reversible = 0` and
+`RiskTier.Low = 0` - permissive defaults, from Phase 1. Both are unreachable in practice because
+`ActionEconomics.Create` requires an explicit reversibility, and `PolicyOutcome.Deny = 0` keeps the
+decision itself fail-closed. Noted rather than changed: relitigating a Phase 1 decision in passing,
+without a compiler, is not the way to do it.
+
+**Static verification:** 247 files, 70 namespaces, 304 types — all checks **PASS**, non-ASCII
+clean, brace balance clean.
+
+**Test counts.** 7 new executable cases. Solution total **635**, counted mechanically across
+`tests/` (every `[Fact]`, plus one per `[InlineData]` row; the solution uses no `[MemberData]`,
+so the count is exact). Summing the per-stage tallies in the entries above gives 638 — those
+were hand counts made as each stage was written, and the mechanical number is the correct one.
+**None executed.**
+
+---
+
 ## Outstanding gates
 
 | Gate | Phase | Owner | Notes |
 |---|---|---|---|
 | `dotnet build` | 0, 1, 2 | developer machine | Warnings are errors; must be clean |
-| `dotnet test` | 1, 2 | developer machine | 418 executable cases, none ever run |
-| `dotnet ef migrations add` + `database update` | 1, 2 | developer machine | Both schemas validated against live PG16; the Phase 2 migration has not been generated |
+| `dotnet test` | 1, 2 | developer machine | 635 executable cases, none ever run |
+| `dotnet ef migrations add` + `database update` | 1, 2 | developer machine | All five Phase 2 tables validated against live PG16; the migration has not been generated |
 | Runtime startup | 0, 1 | developer machine | Options validation runs at startup |
 | Integration tests | 1 | developer machine | Need a Docker daemon, else they self-skip |
-| Data-plane tests | 2 | written, not run | 198 cases covering stages 1-5 |
+| Data-plane tests | 2 | written, not run | 407 cases covering stages 1-10 |
 | CI workflow execution | 0 | GitHub | Present, never triggered |

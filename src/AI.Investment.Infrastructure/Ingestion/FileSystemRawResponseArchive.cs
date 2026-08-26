@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using AI.Investment.Application.Abstractions;
 using AI.Investment.Domain.Ingestion;
@@ -143,6 +144,51 @@ public sealed class FileSystemRawResponseArchive : IRawResponseArchive
                 CultureInfo.InvariantCulture,
                 DateTimeStyles.RoundtripKind),
             metadata.ByteLength);
+    }
+
+    /// <summary>
+    /// Walks the fan-out directories and yields every payload held.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Yields as it walks rather than collecting first, so a sweep's memory does not grow with the
+    /// archive. A missing root is an empty archive, not an error: nothing has been fetched yet.
+    /// </para>
+    /// <para>
+    /// A file whose name is not a content hash is skipped rather than thrown on. Temporary files
+    /// from an interrupted write live in these directories by design, and a sweep that died on one
+    /// would be stopped by exactly the debris it exists to tolerate.
+    /// </para>
+    /// </remarks>
+    public async IAsyncEnumerable<ContentHash> EnumerateAsync(
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        // The filesystem walk below is synchronous, and without this the whole directory tree
+        // would be traversed on the caller's thread before the first hash came back. Yielding once
+        // makes the enumeration genuinely asynchronous, which is what the signature promises.
+        await Task.Yield();
+
+        if (!Directory.Exists(_rootPath))
+        {
+            yield break;
+        }
+
+        foreach (var path in Directory.EnumerateFiles(
+                     _rootPath,
+                     "*" + PayloadExtension,
+                     SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var name = Path.GetFileNameWithoutExtension(path);
+
+            if (!ContentHash.TryCreate(name, out var hash))
+            {
+                continue;
+            }
+
+            yield return hash;
+        }
     }
 
     /// <summary>

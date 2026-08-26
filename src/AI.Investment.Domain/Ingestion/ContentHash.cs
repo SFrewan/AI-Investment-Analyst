@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Security.Cryptography;
 using AI.Investment.Domain.Exceptions;
 
@@ -75,6 +76,45 @@ public sealed record ContentHash
         }
 
         return new ContentHash(normalised);
+    }
+
+    /// <summary>
+    /// Parses a stored hash, returning false instead of throwing when it is not one.
+    /// </summary>
+    /// <remarks>
+    /// For callers reading names they did not write - the archive walking its own directories, for
+    /// instance, where an interrupted write leaves a temporary file by design. Skipping a
+    /// non-hash is the expected path there, and expected paths should not be exceptions.
+    /// <see cref="Create"/> remains the right choice anywhere a malformed value means something is
+    /// actually wrong.
+    /// </remarks>
+    public static bool TryCreate(string? value, [NotNullWhen(true)] out ContentHash? hash)
+    {
+        hash = null;
+
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var normalised = value.Trim().ToLowerInvariant();
+
+        if (normalised.Length != HexLength)
+        {
+            return false;
+        }
+
+        foreach (var c in normalised)
+        {
+            if (!char.IsAsciiDigit(c) && (c < 'a' || c > 'f'))
+            {
+                return false;
+            }
+        }
+
+        hash = new ContentHash(normalised);
+
+        return true;
     }
 
     /// <summary>The leading characters, for logs and identifiers that humans read.</summary>

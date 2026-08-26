@@ -3,6 +3,8 @@ using AI.Investment.Domain.Actions;
 using AI.Investment.Domain.Auditing;
 using AI.Investment.Domain.Companies;
 using AI.Investment.Domain.Ingestion;
+using AI.Investment.Domain.Normalization;
+using AI.Investment.Domain.Observations;
 using AI.Investment.Domain.Retention;
 using AI.Investment.Domain.Sources;
 using Microsoft.EntityFrameworkCore;
@@ -22,12 +24,13 @@ namespace AI.Investment.Infrastructure.Persistence;
 /// naming the rule they broke.
 /// </para>
 /// <para>
-/// Four entity types are exempt: <see cref="AuditRecord"/>, <see cref="ActionExecution"/>,
-/// <see cref="ProcessedAction"/> and <see cref="IngestionRun"/>. They are the platform's own
-/// bookkeeping - the record of what was decided, what was attempted, which keys are claimed and
-/// which retrievals were made or refused - and they must be writable precisely when nothing is
-/// authorised, because that is the situation a denial creates. All four are append-only, so
-/// exempting them grants no ability to change domain state.
+/// Five entity types are exempt: <see cref="AuditRecord"/>, <see cref="ActionExecution"/>,
+/// <see cref="ProcessedAction"/>, <see cref="IngestionRun"/> and
+/// <see cref="QuarantinedPayload"/>. They are the platform's own bookkeeping -
+/// the record of what was decided, what was attempted, which keys are claimed, which retrievals
+/// were made or refused, and which payloads could not be read - and they must be writable precisely
+/// when nothing is authorised, because that is the situation a denial creates. All five are
+/// append-only, so exempting them grants no ability to change domain state.
 /// </para>
 /// <para>
 /// <see cref="DataSource"/> and <see cref="IngestionRun"/> joined the model in the persistence
@@ -62,6 +65,12 @@ public sealed class AppDbContext : DbContext
 
     /// <summary>Payloads deleted under a source's licence, and why.</summary>
     public DbSet<UnreplayableEvidence> UnreplayableEvidence => Set<UnreplayableEvidence>();
+
+    /// <summary>What the platform knows: one subject, one attribute, one value, one provenance.</summary>
+    public DbSet<Observation> Observations => Set<Observation>();
+
+    /// <summary>Payloads that were archived but could not be turned into observations.</summary>
+    public DbSet<QuarantinedPayload> QuarantinedPayloads => Set<QuarantinedPayload>();
 
     /// <summary>
     /// Commits domain changes. Throws <see cref="UnauthorizedWriteException"/> unless the
@@ -181,11 +190,24 @@ public sealed class AppDbContext : DbContext
     /// modification.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// <see cref="IngestionRun"/> belongs here for the same reason <see cref="AuditRecord"/> does:
     /// a refused run must be recordable precisely when nothing is authorised, because refusal is
     /// the situation in which no authorisation exists. Without the exemption, the platform
     /// declining to ingest something would be unable to write down that it had declined.
+    /// </para>
+    /// <para>
+    /// <see cref="QuarantinedPayload"/> joins them for the same reason. A policy denial is one of
+    /// the things worth quarantining a run over, so the record of "this could not be read" must be
+    /// writable in exactly the state where nothing else is. Quarantining creates no belief and
+    /// changes no domain state - it records a gap - so the exemption grants nothing beyond that.
+    /// </para>
+    /// <para>
+    /// <see cref="Observation"/> is deliberately <em>not</em> exempt. An observation is something
+    /// the platform believes, and beliefs are precisely what the seam exists to audit.
+    /// </para>
     /// </remarks>
     private static bool IsSeamBookkeeping(object entity) =>
-        entity is AuditRecord or ActionExecution or ProcessedAction or IngestionRun;
+        entity is AuditRecord or ActionExecution or ProcessedAction or IngestionRun
+            or QuarantinedPayload;
 }

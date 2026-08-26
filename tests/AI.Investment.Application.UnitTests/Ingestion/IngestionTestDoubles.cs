@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using AI.Investment.Application.Abstractions;
 using AI.Investment.Application.Ingestion;
 using AI.Investment.Domain.Ingestion;
@@ -123,6 +124,23 @@ internal sealed class RecordingArchive : IRawResponseArchive
         ContentHash hash,
         CancellationToken cancellationToken = default) =>
         Task.FromResult(_described.TryGetValue(hash.Value, out var payload) ? payload : null);
+
+    public async IAsyncEnumerable<ContentHash> EnumerateAsync(
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        // The await is what makes this a valid async iterator; there is nothing to wait for.
+        await Task.CompletedTask.ConfigureAwait(false);
+
+        // Materialised first on purpose. The retention sweep deletes while it enumerates, and a
+        // double that yielded straight from the dictionary would throw where the real filesystem
+        // archive - which walks a directory snapshot - does not.
+        foreach (var value in _stored.Keys.ToList())
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            yield return ContentHash.Create(value);
+        }
+    }
 
     public Task DeleteAsync(ContentHash hash, CancellationToken cancellationToken = default)
     {

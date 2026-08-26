@@ -25,7 +25,7 @@ one document knows all of them.
 |---|---|---|---|
 | 0 | Foundation, governance and configuration | Implemented — verification pending | [PHASE-0-FOUNDATION.md](PHASE-0-FOUNDATION.md) |
 | 1 | Domain core, epistemic model and the Action/Policy safety seam | Implemented — verification pending | [PHASE-1-DOMAIN-CORE-AND-SAFETY-SEAM.md](PHASE-1-DOMAIN-CORE-AND-SAFETY-SEAM.md) |
-| 2 | Global data and intelligence foundation | In progress — stages 1–5, 7 and retention implemented | [PHASE-2-GLOBAL-DATA-AND-INTELLIGENCE-FOUNDATION.md](PHASE-2-GLOBAL-DATA-AND-INTELLIGENCE-FOUNDATION.md) |
+| 2 | Global data and intelligence foundation | Code complete — all ten stages implemented; verification pending | [PHASE-2-GLOBAL-DATA-AND-INTELLIGENCE-FOUNDATION.md](PHASE-2-GLOBAL-DATA-AND-INTELLIGENCE-FOUNDATION.md) |
 
 **No phase is currently Verified.** The solution has never been compiled, tested or migrated
 end to end. The reason is environmental and is recorded in each document's section 12 and in the
@@ -33,8 +33,15 @@ verification log: the assistant working on this repository has no .NET SDK, no N
 no shell on the developer machine, so `dotnet build`, `dotnet test` and
 `dotnet ef database update` must be run locally.
 
-Everything that *could* be verified without a compiler has been, including a real PostgreSQL 16
-validation of the generated schema. See the verification log for what was executed.
+**635 executable test cases now exist across the solution and none has ever run.** That number is
+the size of the gap, not a claim about quality: an unexecuted test proves nothing except that
+somebody thought about the case.
+
+Everything that *could* be verified without a compiler has been, including live PostgreSQL 16
+validation of all five Phase 2 tables, index-usability checks by query plan, service-graph review,
+dependency-direction analysis and a repository-wide structural scan. See the verification log for
+exactly what was executed and what it found — including four defects it caught before any compiler
+would have.
 
 ## Related documents
 

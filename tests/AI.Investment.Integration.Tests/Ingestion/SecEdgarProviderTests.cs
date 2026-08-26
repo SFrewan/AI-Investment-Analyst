@@ -73,16 +73,17 @@ public sealed class SecEdgarEndpointTests
 public sealed class SecEdgarSourceTests
 {
     private static readonly DateTime Now = new(2026, 8, 25, 12, 0, 0, DateTimeKind.Utc);
+    private static readonly SecEdgarSource Source = new();
 
     /// <summary>A connector shipping in the box does not get to switch itself on.</summary>
     [Fact]
     public void The_definition_is_registered_inactive() =>
-        Assert.False(SecEdgarSource.Definition(Now).IsActive);
+        Assert.False(Source.Definition(Now).IsActive);
 
     [Fact]
     public void Edgar_is_a_primary_regulatory_source()
     {
-        var source = SecEdgarSource.Definition(Now);
+        var source = Source.Definition(Now);
 
         Assert.Equal(SourceAuthority.Primary, source.Authority);
         Assert.Equal(SourceType.RegulatoryAuthority, source.Type);
@@ -96,7 +97,7 @@ public sealed class SecEdgarSourceTests
     [Fact]
     public void The_recorded_licensing_permits_storage_and_automated_processing()
     {
-        var source = SecEdgarSource.Definition(Now);
+        var source = Source.Definition(Now);
 
         Assert.True(source.Licensing.StorageAllowed);
         Assert.True(source.Licensing.AutomatedProcessingAllowed);
@@ -106,7 +107,7 @@ public sealed class SecEdgarSourceTests
     [Fact]
     public void The_definition_is_admissible_once_activated()
     {
-        var source = SecEdgarSource.Definition(Now);
+        var source = Source.Definition(Now);
         source.Activate(Now);
 
         var admission = SourceAdmission.Evaluate(
@@ -119,12 +120,12 @@ public sealed class SecEdgarSourceTests
 
     [Fact]
     public void The_definition_and_the_connector_agree_on_the_source_id() =>
-        Assert.Equal(SecEdgarProvider.Id, SecEdgarSource.Definition(Now).Id);
+        Assert.Equal(SecEdgarProvider.Id, Source.Definition(Now).Id);
 }
 
 public sealed class SecEdgarOptionsTests
 {
-    private static List<string> Validate(SecEdgarOptions options) =>
+    private static IReadOnlyList<string> Validate(SecEdgarOptions options) =>
         options
             .Validate(new System.ComponentModel.DataAnnotations.ValidationContext(options))
             .Select(r => r.ErrorMessage ?? string.Empty)

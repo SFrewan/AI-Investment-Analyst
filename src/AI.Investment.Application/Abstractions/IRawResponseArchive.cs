@@ -64,6 +64,28 @@ public interface IRawResponseArchive
     Task<ArchivedPayload?> DescribeAsync(ContentHash hash, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Every payload the archive currently holds, in no guaranteed order.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Exists for the retention sweep, which has to ask "what is here?" before it can ask "may this
+    /// still be kept?". Nothing else needs it: ingestion addresses payloads by hash and
+    /// normalisation reads the hashes a run recorded.
+    /// </para>
+    /// <para>
+    /// Streamed rather than returned as a list. An archive is expected to outgrow memory long
+    /// before it outgrows disk, and a sweep that had to materialise every hash first would fail at
+    /// exactly the size where sweeping starts to matter.
+    /// </para>
+    /// <para>
+    /// <strong>No ordering is promised</strong>, deliberately. A filesystem implementation walks
+    /// directories, and pretending the result is sorted would invite a caller to depend on it. A
+    /// sweep that needs a bound should take one; it must not assume the oldest come first.
+    /// </para>
+    /// </remarks>
+    IAsyncEnumerable<ContentHash> EnumerateAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Permanently removes an archived payload.
     /// </summary>
     /// <remarks>
