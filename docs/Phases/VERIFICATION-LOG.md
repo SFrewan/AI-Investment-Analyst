@@ -741,14 +741,590 @@ were hand counts made as each stage was written, and the mechanical number is th
 
 ---
 
+## 2026-08-26 — First real build gate: three CS0246 defects found and fixed
+
+**The local environment now works.** `dotnet restore` passed, `dotnet build` reached compilation,
+Domain and Domain.UnitTests **passed**, and Application failed with:
+
+```
+src\AI.Investment.Application\Normalization\NormalizationPipeline.cs(112,75)
+CS0246: The type or namespace name 'DataCategory' could not be found
+```
+
+**Root cause.** `NormalizationPipeline.cs` had no `using AI.Investment.Domain.Sources;`. Column 75
+is the `DataCategory category` parameter of `FindNormalizer`.
+
+What made it survive every static check I ran is the *other* type on the same line. The signature
+read:
+
+```csharp
+private INormalizer? FindNormalizer(Domain.Sources.SourceId sourceId, DataCategory category)
+```
+
+`SourceId` was written **partially qualified**, which resolves through C# namespace walking - from
+`AI.Investment.Application.Normalization` the compiler reaches `AI.Investment.Domain.Sources` via
+the shared `AI.Investment` ancestor. So the file appeared to have considered that namespace while
+never importing it, and `DataCategory` beside it was left bare. A partial qualification used in
+place of a `using` is the smell; it hid the defect from a reader as effectively as from my tooling.
+
+**Two more of the same defect were found before the build could reach them.** The build stops
+reporting a project at its first failure, so these were still ahead:
+
+| File | Type | Missing using | Would have failed in |
+|---|---|---|---|
+| `Normalization/NormalizationPipeline.cs:112` | `DataCategory` | `AI.Investment.Domain.Sources` | Application *(reported)* |
+| `Persistence/Configurations/ObservationConfiguration.cs:126` | `Provenance` | `AI.Investment.Domain.Evidence` | Infrastructure |
+| `Normalization/NormalizationPipelineTests.cs:190` | `ActionProposal` | `AI.Investment.Domain.Actions` | Application.UnitTests |
+
+**What was changed.** Three added `using` directives, and one partial qualification simplified.
+No type was duplicated, no project reference added, no boundary weakened - `DataCategory`,
+`Provenance` and `ActionProposal` all remain single declarations in the Domain project, and every
+consuming project already referenced Domain.
+
+Each new `using` was checked for CS0104 ambiguity before it was added, by intersecting the declared
+simple type names of the incoming namespace against every namespace already imported in that file.
+No collisions in any of the three.
+
+**Why static review did not catch this, and what now does.**
+
+`static_review.py` verified that every `using AI.Investment.*` **names a namespace that exists**.
+That is the opposite direction from the one that matters here: it cannot catch a type used
+*without* the using that would bring it in. CS0246 lives exactly in that gap.
+
+A new check was written that resolves the other direction - for every file, compute the visible
+namespaces (its own, every ancestor prefix, and its usings), then confirm every solution type
+referenced by simple name is declared in one of them. Run against the repository it found the
+reported defect plus the two ahead of it, and after the fixes it reports clean across all 247
+files.
+
+Its first run produced 17 hits, 14 of them false: a type name reused as a record parameter
+(`string Ticker`), a property (`CompanyDto? Company`), an enum member (`Exchange = 4`), or a member
+read through implicit `this` (`var range = Window;`). Each was inspected individually rather than
+dismissed by pattern - three of the seventeen were real, and a sweep that had assumed the shape of
+the noise would have missed at least one of them.
+
+**The check is deliberately NOT added to the repository.** It is an approximation of one narrow
+thing the C# compiler does exactly, instantly, and as a side effect of work that now runs locally.
+Committing a Python script into a .NET solution to re-implement a fraction of `dotnet build` would
+add a dependency and a maintenance burden in exchange for a worse answer. It stays a working tool
+for an environment that has no compiler; **the real closure of this gap is that the build gate now
+runs.**
+
+**Static verification after the fix:** type resolution **PASS** (247 files), static review **PASS**
+(only the two known generic-arity false positives), interface completeness **PASS** (the six
+reported are the known expression-bodied properties), brace balance **PASS** on all three changed
+files, non-ASCII **clean**, both `appsettings` files parse.
+
+**Still pending:** the Release build, the full test run, and the migration. Domain and
+Domain.UnitTests are the only projects to have actually passed anything.
+
+---
+
+## 2026-08-26 — Build gate, second pass: CS1503 method-group conversion
+
+Five identical errors, all from one declaration:
+
+```
+Argument 1: cannot convert from 'method group'
+to 'System.Func<AI.Investment.Domain.Ingestion.IngestionRequest,
+                AI.Investment.Domain.Ingestion.IngestionRun>'
+```
+
+**Root cause.** `DataAcquisitionServiceTests` offered a two-parameter method to a one-parameter
+delegate:
+
+```csharp
+private static IngestionRun Succeeded(IngestionRequest request, int artifacts = 1)
+...
+new StubIngestionGateway(Succeeded)     // Func<IngestionRequest, IngestionRun>
+```
+
+**A method group converts to a delegate only when its parameter list matches exactly.** Optional
+values are applied at an explicit call site, never during the conversion, so `int artifacts = 1`
+does not make `Succeeded` a one-parameter method for this purpose. Five call sites passed it as a
+method group; the sibling helper `Refused(IngestionRequest)` compiled because its signature already
+matched, which is why exactly five errors appeared rather than seven.
+
+**Fix.** Split into two methods, neither with an optional parameter and neither overloading the
+other:
+
+- `SucceededWith(IngestionRequest, int)` — the parameterised builder, called explicitly.
+- `Succeeded(IngestionRequest)` — one parameter, delegated to by the five method-group sites.
+
+A separate *name* rather than an overload, deliberately. An overloaded method group would compile
+here, but it puts the resolution back in front of type inference for no benefit — the same
+reasoning that replaced the overloaded mapper method groups in the controllers during stage 9's
+self-review.
+
+**Swept for the same class of defect.** A second check now looks for any method declaring optional
+parameters whose bare name is passed as an argument. Across all 247 files it found this one
+occurrence and nothing else; it reports clean after the fix.
+
+**On the pattern in these two build-gate entries.** Both failures were *lexical* - a missing using,
+a signature that does not match - and both were in categories my static tooling could not see. The
+semantic risks I had ranked as most likely to fail (owned-type EF mappings, async iterators,
+collection expressions) have compiled without complaint so far. The lesson is recorded rather than
+generalised: two data points about one codebase is not a theory, but it is enough to stop treating
+"I have read this carefully" as equivalent to "this parses".
+
+**Static verification after the fix:** method groups **PASS**, type resolution **PASS** (247
+files), static review **PASS** (two known generic-arity false positives), interface completeness
+**PASS** (six known expression-bodied properties), brace balance **PASS**, non-ASCII **clean**.
+
+**Changed:** one file, `tests/AI.Investment.Application.UnitTests/Ingestion/DataAcquisitionServiceTests.cs`.
+No production code touched.
+
+---
+
+## 2026-08-26 — Build gate, third pass: CA1848 and CA1859
+
+Analyzer warnings, which are errors here. Nine were reported; the underlying count was **thirteen**
+- the reported list was deduplicated by message text, and eleven distinct `ILogger` call sites share
+four message shapes. Checking that rather than fixing the nine named lines is what kept this to one
+round.
+
+**CA1848 - use `LoggerMessage` delegates (11 sites).** The two stage 9 hosted services are the
+first code in the solution to use `Microsoft.Extensions.Logging` extension methods; `Program.cs`
+logs through Serilog's static logger, which the rule does not target. That is why the rule had never
+fired before.
+
+Fixed with the `[LoggerMessage]` source generator: two `internal static partial` classes, `SweepLog`
+(7 messages) and `SeedingLog` (4), each message a cached delegate so a disabled level costs a level
+check rather than an allocation and a template parse.
+
+Two choices inside that worth recording:
+
+- **Static methods taking an explicit `ILogger`**, not instance methods on the service. Instance
+  logging methods work only when the generator can find an `ILogger` field - a newer and more
+  fragile contract. The static form has been supported since .NET 6.
+- **`Finished` takes the sweep summary's counts individually** rather than the record. A structured
+  sink can then filter on `Failed` or `Deleted` directly, which is the point of structured logging;
+  passing the record would have produced one opaque string. The warning forced a rewrite of these
+  call sites and the rewrite made them better, which is not the usual outcome of an analyzer fight.
+
+**CA1859 - return the concrete type (3 sites, one of which the build had not yet reached).**
+
+| Member | Was | Now |
+|---|---|---|
+| `SourcesController.Validate` | `IActionResult?` | `ObjectResult?` |
+| `CreateCompanyValidator.Validate` | `IReadOnlyList<string>` | `List<string>` |
+| `SecEdgarSubmissionsNormalizer.Read` | `IReadOnlyList<Observation>` | `List<Observation>` |
+
+The third was found by sweeping rather than reported - Infrastructure has not compiled yet, so it
+was still ahead.
+
+`CreateCompanyValidator.Validate` deserved a moment's thought rather than a reflex. Its
+`IReadOnlyList` signature was a deliberate immutability signal, and CA1859 asks to drop it. It was
+dropped because **nothing was relying on it**: the list is allocated fresh per call, its single
+caller counts it and hands it to `ValidationFailedException`, which copies. There is no shared state
+the read-only type was protecting. Suppressing a correct rule to preserve a signal no consumer reads
+would have been the weaker choice, and the repository's claim that CA1032 is its only rule-level
+suppression stays true. The reasoning is recorded in the code, not just here.
+
+**Verified by hand, since the generator cannot be run:** all 11 message templates were checked
+placeholder-by-placeholder against their parameter names and order, and all 11 `EventId` values
+confirmed distinct. A template naming a parameter that does not exist is a generator error, and it
+is the failure mode this shape of code actually has.
+
+**Swept for both rules across `src/`:** no `ILogger` extension call remains. Two other classes
+(`ConfiguredPolicyContextProvider`, `GlobalExceptionHandler`) hold an `ILogger` but never log, so
+neither triggers CA1848. The remaining interface-returning private methods return `IQueryable<T>` or
+`IConfigurationRoot`, which have no more-derived compile-time type for CA1859 to suggest.
+
+**Static verification after the fix:** type resolution **PASS**, method groups **PASS**, static
+review **PASS**, brace balance **PASS** on all five changed files, non-ASCII **clean**, log
+templates **PASS**.
+
+**Changed:** five files - two hosted services, one controller, one validator, one normaliser.
+
+---
+
+## 2026-08-26 — Test gate, first pass: three failures fixed, and one that was never reported
+
+`dotnet restore` **PASSED**. `dotnet build -c Release` **PASSED** - the first clean compile of the
+whole solution. `dotnet test -c Release` **FAILED** with three distinct causes. All three are fixed,
+plus a fourth defect found by sweeping and a fifth found in the test apparatus itself.
+
+### 1. `DataPlaneMapperTests.A_source_crosses_the_boundary_intact` - expected "Authoritative", got "confirms alone"
+
+**Root cause: prose on the wire.** `SourceType`, `SourceAuthority` and `ReliabilityGrade` are enums,
+so `.ToString()` gives a stable member name. `VerificationPolicy` is **not** an enum - it is a
+`sealed record` whose `ToString()` is deliberately a sentence for a human reading a log:
+
+```csharp
+public override string ToString() =>
+    CanConfirmAlone ? "confirms alone" : $"requires {RequiredIndependentSources} independent sources";
+```
+
+The mapper treated it as if it were an enum. Two things were wrong with the result: the wording can
+be changed without anyone realising a client depended on it, and the sentence is lossy - a policy
+built by `VerificationPolicy.Create` renders as prose no caller can act on.
+
+**The test was right and was not changed.** The architecture settles it twice over. Persistence
+already stores verification as an **owned type with a column per component** - structure, not a
+string - and `SourceLicensingDto` already crosses permissions individually rather than as prose,
+which this very test file asserts. So the DTO now carries a stable name *and* the two facts the
+policy consists of: `VerificationPolicy` (`Authoritative` / `RequiresCorroboration` / `Cautious` /
+`Custom`), `CanConfirmAlone`, `RequiredIndependentSources`.
+
+**The identical defect was found by sweeping**, in a place no test covered: `UpdateCadence` is also a
+value object, and `ToString()` renders `"Daily (~1.00:00:00)"`. `SourceDto` and `FreshnessDto` both
+emitted it. Both now cross the cadence **kind** as a stable name, with `ExpectedIntervalSeconds`
+beside it - null when the source cannot be late, which is a stated fact rather than a missing value.
+
+Five regression tests added covering all four well-known policies, the custom case, and both cadence
+shapes.
+
+### 2. `SecEdgarSubmissionsNormalizerTests.An_overlong_value_costs_only_its_own_observation`
+
+**Root cause: the guard could not catch the thing it was written for.** The normaliser's `Add`
+helper wrapped `Observation.RecordFact` in a `try/catch (DomainValidationException)` so that one
+unusable field would not cost the whole document. But the call site read:
+
+```csharp
+Add(observations, input, attribute, ObservationValue.Text(value), provenance, caveats);
+```
+
+`ObservationValue.Text(...)` is an **argument**, evaluated at the call site before `Add` is entered -
+and the 4000-character rule is enforced during construction. So the one case the guard existed for
+was the one case that ran outside it, and an overlong field threw straight out of the normaliser.
+
+**Fixed by passing the raw string and constructing inside the guard.** The domain's 4000-character
+invariant is untouched, exactly as required - what changed is where the refusal is caught. The field
+now produces no observation, which is a visible gap rather than a wrong value, and the other eight
+observations survive.
+
+### 3. API tests - "The logger is already frozen"
+
+**Root cause: process-wide mutable state in the host-build path.** `Main` creates a Serilog
+*bootstrap logger* - a `ReloadableLogger` held in the static `Log.Logger`. `UseSerilog` with the
+three-argument delegate and the default `preserveStaticLogger: false` **freezes** that reloadable
+logger when the host is built, and a frozen logger cannot be frozen again.
+
+One host per process hides this completely. A test process does not: each `WebApplicationFactory`
+fixture builds its own host, so the second build threw, `Main` exited without producing a host, and
+every API test failed with "The entry point exited without ever building an IHost". Three test
+classes, three fixtures, three failures - which matches the reported count exactly.
+
+**Fixed with `preserveStaticLogger: true`,** and verified against the Serilog source rather than
+memory. In `SerilogServiceCollectionExtensions.AddSerilog`, `useReload` is defined as
+`reloadable != null && !preserveStaticLogger`, so the `Freeze()` call is unreachable when the static
+logger is preserved; the `Log.Logger` assignment is separately guarded; and `Serilog.ILogger` is
+registered as a singleton **unconditionally**, so `ILogger<T>`, the hosted services, the controllers
+and `UseSerilogRequestLogging` all still receive the fully configured logger.
+
+This separates the two logging paths honestly rather than papering over a collision. The static
+`Log` stays the bootstrap console logger, which is all `Main` uses it for - a start-up line and a
+fatal exception, both of which must work *before* a host exists and both of which reach the console
+either way, since console is this application's only sink.
+
+The alternative - a fresh bootstrap logger per build - would also compile and would **race**: xUnit
+runs test collections in parallel, so two fixtures would assign and freeze the same process-wide
+static concurrently. Removing the shared static from the host-build path is the fix; making it churn
+faster is not.
+
+### 4. The one nobody reported: eight database tests were counted as PASSED, not skipped
+
+Investigating the note about skipped PostgreSQL tests found something worse than a skip.
+
+`WriteGuardTests` gated each database test on `if (!Skip()) { return; }`, where the helper printed
+`SKIPPED: ...` to the console and returned false. **xUnit reports a test that returns normally as
+Passed.** There was no skip mechanism anywhere in the solution - no `Skip =`, no `SkippableFact`, no
+`Assert.Skip`. So on every machine without Docker, eight tests covering **the persistence half of
+the safety seam** were counted green while asserting nothing, and the only evidence otherwise was a
+console line nobody reads.
+
+That is precisely the failure mode this project's documentation rules exist to prevent, sitting
+inside the apparatus that is supposed to enforce them.
+
+**Fixed** with `Xunit.SkippableFact` 1.5.85 (verified compatible with xunit 2.9.2 and net8.0;
+depends on `xunit.extensibility.execution >= 2.4.0`). The eight `[Fact]` attributes are now
+`[SkippableFact]` and each guard is `Skip.IfNot(_fixture.Available, _fixture.UnavailableReason)`.
+xUnit 2.x cannot skip dynamically without it. The summary line now says Skipped when the tests were
+skipped.
+
+**These eight remain unproven until a database is supplied.** Set `AIINV_TEST_POSTGRES` to a
+reachable PostgreSQL instance, or start Docker so Testcontainers can provide one. They are:
+every test in `tests/AI.Investment.Integration.Tests/WriteGuardTests.cs`.
+
+### Static verification after all fixes
+
+Type resolution **PASS** (247 files), method groups **PASS**, static review **PASS** (two known
+generic-arity false positives), interface completeness **PASS** (six known expression-bodied
+properties), brace balance **PASS** on all seven changed files, non-ASCII **clean**, both edited
+MSBuild files well-formed, and every `PackageReference` has a central `PackageVersion`.
+
+### What is NOT claimed
+
+**No build or test result is claimed for these fixes.** This environment still has no .NET SDK, so
+the Release build and test run must be executed locally. Phase 2 remains **not verified**.
+
+**Changed:** `SourceDto.cs`, `FreshnessDto.cs`, `SecEdgarSubmissionsNormalizer.cs`, `Program.cs`,
+`DataPlaneMapperTests.cs`, `WriteGuardTests.cs`, `PostgresFixture.cs`,
+`Directory.Packages.props`, `AI.Investment.Integration.Tests.csproj`.
+
+---
+
+## 2026-08-26 — Test gate GREEN, and the gates that can be run without an SDK
+
+### The test run (executed locally by the developer)
+
+```
+Build:    PASSED (Release)
+Tests:    640 total
+Passed:   632
+Failed:   0
+Skipped:  8
+Duration: 17.8s
+```
+
+**632 passed. 8 skipped. The 8 are not counted as passing.**
+
+### The 8 skipped tests, confirmed by inspection
+
+Every one is in `tests/AI.Investment.Integration.Tests/WriteGuardTests.cs`, and every one skips on
+the same condition - `Skip.IfNot(_fixture.Available, _fixture.UnavailableReason)`, where `Available`
+is false because neither `AIINV_TEST_POSTGRES` is set nor is a Docker daemon reachable for
+Testcontainers. They are the only skippable tests in the solution, which is why 632 + 8 = 640
+exactly.
+
+| Skipped test |
+|---|
+| `A_domain_write_without_an_authorisation_window_is_refused` |
+| `A_domain_write_inside_an_authorisation_window_succeeds` |
+| `An_audit_record_can_be_written_when_nothing_is_authorised` |
+| `An_audit_record_cannot_be_modified` |
+| `An_audit_record_cannot_be_deleted` |
+| `An_audit_record_cannot_be_modified_even_inside_an_authorisation_window` |
+| `An_execution_record_cannot_be_deleted_even_inside_an_authorisation_window` |
+| `An_idempotency_key_can_be_claimed_only_once` |
+
+These cover **the persistence half of the safety seam** - the guarantee that the database refuses a
+domain write when no authorisation window is open, and that the append-only ledgers cannot be
+rewritten. The domain half is proven by unit tests that did run. The persistence half is not
+proven, and Phase 2 cannot be Verified while it is not.
+
+### Gates run in the assistant's environment this session
+
+| Gate | Result |
+|---|---|
+| EF model completeness - every mapped property of every configured entity is configured or ignored | **PASS** - 9 configurations, no unconfigured property |
+| Full schema applied to live PostgreSQL 16.13 as one unit | **PASS** - 9 tables, 103 columns, 31 indexes |
+| Data-plane walkthrough at the storage level | **PASS** - 15 checks |
+| EDGAR normaliser field assumptions vs the live document | **PASS** - all 9 fields present, all expected types |
+| Type resolution / method groups / static review / interface completeness / brace balance / non-ASCII | **PASS** |
+
+**EF model completeness** is new and is the check that most directly predicts migration
+correctness: a property nobody configured still becomes a column by convention, with no length, no
+converter and no explicit nullability, and the first sign is a migration diff nobody expected. All
+nine entities are fully accounted for.
+
+**The full schema** was assembled from two sources: Phase 1's four tables from the *real* EF
+migration `20260825023757_InitialCreate` (parsed, not retyped), and Phase 2's five hand-derived from
+their configurations. Applying both to one database proves the whole model coexists - which
+validating Phase 2's five alone did not.
+
+**The storage walkthrough** follows the actual data-plane flow rather than testing tables in
+isolation: register EDGAR inactive, reject a duplicate registration, activate, record a refused run
+carrying its rule, record a successful run archiving a payload, resolve the payload through the
+`jsonb` containment query `EfPayloadReferenceIndex` uses, record observations, quarantine an
+unreadable payload, confirm the quarantine reason carries no payload excerpt, delete under retention
+and mark the evidence unreplayable, then confirm **the run still references the deleted payload so
+the gap is visible rather than silent**, and finally two point-in-time reads and an `interval`
+round-trip. All fifteen behaved as designed.
+
+**The EDGAR field check** is worth more than it looks. Every normaliser test runs against a fixture
+this project wrote, so a field EDGAR renamed would pass every test and silently produce fewer
+observations forever. Fetching the live submissions document for CIK 0000320193 confirmed all seven
+text fields plus `tickers` and `exchanges` are present with the expected types, and that the first
+ticker/exchange pair is `AAPL` / `Nasdaq` - the values the fixture asserts.
+
+### Gates that genuinely cannot be run here
+
+| Gate | Blocker |
+|---|---|
+| `dotnet ef migrations add DataPlane` + `database update` | **No .NET SDK.** Not installable in this container (four package routes 403), and there is no shell tool onto the developer's machine. |
+| The 8 write-guard tests | **No PostgreSQL or Docker on the machine that runs the tests.** This container has PostgreSQL 16.13, but the test process runs on the developer's machine and cannot reach it. |
+| True ingestion end-to-end against live SEC | Requires a running host with a configured contact address, a registered and activated source, and a real fetch. Cannot be executed without the SDK. |
+
+**The `DataPlane` migration has not been generated.** Confirmed by inspecting the developer's
+`Migrations` folder: it holds only `20260825023757_InitialCreate` and a model snapshot containing
+exactly the four Phase 1 entities. The five Phase 2 entities are absent from the snapshot, so the
+migration is genuinely pending rather than merely unapplied.
+
+### What the generated migration must produce
+
+Derived from the live schema, so it can be checked mechanically rather than read:
+
+| Table | Columns | Indexes (incl. PK) |
+|---|---|---|
+| `data_sources` | 21 | 3 |
+| `ingestion_runs` | 17 | 4 |
+| `observations` | 15 | 4 |
+| `quarantined_payloads` | 6 | 4 |
+| `unreplayable_evidence` | 5 | 3 |
+
+Nullable columns - the easiest thing for a migration to get wrong, and the ones that carry meaning
+here (a null retention limit means "no licensed cap", not "unknown"):
+`data_sources.cadence_interval`, `.description`, `.licensing_notes`, `.retention_max_age`;
+`ingestion_runs.completed_at_utc`, `.reason`, `.refusal_rule_id`, `.subject_identifier`,
+`.window_start_utc`, `.window_end_utc`; `observations.confidence`, `.source_record_id`,
+`.source_url`, `.subject_identifier`.
+
+Non-default column types: `data_sources.categories` **jsonb**, `.cadence_interval` **interval**,
+`.retention_max_age` **interval**; `ingestion_runs.artifacts` **jsonb**; `observations.caveats`
+**jsonb**, `.confidence` **numeric(5,4)**.
+
+### Status
+
+**Phase 2 is NOT Verified.** Build and tests are green, every gate available without an SDK has
+passed, and two required gates remain: the migration, and the eight write-guard tests. Neither can
+be executed from here.
+
+**A note on the non-ASCII scan.** It now reports two hits, both a UTF-8 BOM on line 1 of EF's own
+generated migration files. Generated code is excluded from the scan rather than edited; hand-written
+code remains clean.
+
+---
+
+## 2026-08-26 — Migration gate: two EF model defects, one of them safety-relevant
+
+`dotnet ef migrations add DataPlane` ran for the first time and failed:
+
+```
+No suitable constructor was found for entity type 'IngestionRequest'.
+Cannot bind: subject, window.
+```
+
+### 1. `IngestionRequest` - an unbindable constructor (the reported error)
+
+`IngestionRequest` is a `sealed record` whose only constructor takes seven parameters. Five are
+scalars EF can bind. Two are not:
+
+```csharp
+private IngestionRequest(..., IngestionSubject subject, DateRange? window, ...)
+```
+
+`IngestionRunConfiguration` maps both as **nested owned types** - `request.OwnsOne(x => x.Subject)`
+and `request.OwnsOne(x => x.Window)` - and an owned reference is a *navigation*. Microsoft's
+documentation is explicit: **"EF Core cannot set navigation properties using a constructor."** So
+neither parameter is bindable, that constructor is not a candidate, the record's compiler-generated
+copy constructor is not one either, and EF is left with none. Hence the error naming exactly those
+two parameters.
+
+**Fixed with a private parameterless constructor**, the same pattern every aggregate in this model
+already uses - `Observation`, `DataSource`, `IngestionRun`, `QuarantinedPayload` all have one, and
+all have owned navigations that work. EF constructs through it and then sets each property,
+including the two owned navigations. `IngestionSubject` and `DateRange` are untouched, `Create`
+remains the only way application code builds a request, and every validation rule it applies is
+unchanged.
+
+### 2. `LicensingTerms.Retention` - never mapped at all
+
+Found by sweeping for the same class of defect rather than reported. `LicensingTerms.Retention`
+appeared in `DataSourceConfiguration` **nowhere**: no `Property`, no `OwnsOne`, no `Ignore`.
+
+This is worse than the first defect. `RetentionLimit` is the licensed retention cap that the
+approved Option C model is built on - `RetentionPolicy` reads it to decide whether an archived
+payload must be deleted. Unmapped, it never reached the database, so **a source licensed for 365
+days would have reloaded with no cap at all** and retention would have concluded, in good faith,
+that every payload could be kept forever. A compliance obligation would have been silently dropped
+by the component that exists to honour it.
+
+**Mapped as a NOT NULL string via a value converter**, and the shape was chosen rather than
+defaulted to:
+
+- **Not a nullable interval.** A value converter is not applied to a null column, so
+  `RetentionLimit.Unlimited` - which carries a null `MaximumAge` - would reload as a *null
+  `RetentionLimit`*, putting a `NullReferenceException` inside the one rule that destroys evidence.
+  Unlimited is a stated value, not an absence, and the storage has to say so. The column holds the
+  word `unlimited` or a round-trippable duration.
+- **Not an owned type.** That would have broken `LicensingTerms`'s constructor in exactly the way
+  an owned `Subject` and `Window` broke `IngestionRequest`, and a required owned dependent whose
+  only column is null is its own EF problem. As a converted scalar the constructor parameter binds
+  and nothing else changes.
+
+### Why the earlier model check missed it
+
+The check written on 2026-08-26 verified every property of each **root entity**. It never descended
+into owned types, so a property of `LicensingTerms` could be entirely unmapped and still pass. That
+gap is now closed by a second check that walks every `OwnsOne` block, resolves the owned type and
+verifies its own properties - recursively.
+
+Both new checks were **verified by reproduction**: with each fix temporarily reverted, the checker
+reports precisely the defect that was reported by EF, naming the same type and the same parameters;
+with the fix restored, it passes. A check that has never failed is not evidence.
+
+### Static verification after both fixes
+
+| Check | Result |
+|---|---|
+| EF constructor bindability - every materialised type has a constructor EF can bind | **PASS** - 17 types, 8 owned |
+| EF owned-type mapping completeness (new) | **PASS** - 9 owned mappings |
+| EF entity mapping completeness | **PASS** - 9 configurations |
+| Type resolution / method groups / static review / interfaces / braces / non-ASCII | **PASS** |
+
+### Schema re-validated, and an earlier expectation corrected
+
+The full nine-table schema was rebuilt and re-applied to live PostgreSQL 16.13. `licence_retention`
+round-trips both cases: `unlimited`, and `365.00:00:00` for a bounded licence.
+
+**A correction to the previous entry.** The expected-migration table published on 2026-08-26 was
+partly derived from memory rather than from the configuration, and eight `data_sources` column
+names in it were wrong - `storage_allowed` for `licence_storage_allowed`, and so on - plus it named
+a `retention_max_age interval` column that did not exist in the configuration at all. The column
+*counts* happened to be right, which is exactly how that kind of error survives review. Column
+names are now extracted mechanically from `HasColumnName` in each configuration.
+
+| Table | Columns | Indexes (incl. PK) |
+|---|---|---|
+| `data_sources` | 21 | 3 |
+| `ingestion_runs` | 17 | 4 |
+| `observations` | 15 | 4 |
+| `quarantined_payloads` | 6 | 4 |
+| `unreplayable_evidence` | 5 | 3 |
+
+`data_sources` columns, verbatim: `id`, `name`, `type`, `authority`, `reliability`, `region`,
+`is_active`, `description`, `registered_at_utc`, `updated_at_utc`, `categories`, `cadence_kind`,
+`cadence_interval`, `licence_storage_allowed`, `licence_redistribution_allowed`,
+`licence_processing_allowed`, `licence_attribution_required`, `licence_notes`, **`licence_retention`**,
+`verification_can_confirm_alone`, `verification_required_sources`.
+
+`licence_retention` is the new one. Its absence from a generated migration would mean the fix did
+not take.
+
+### Tests added
+
+Three `SkippableFact` round-trip tests in `SourceMappingTests`, covering a bounded retention cap, an
+unlimited licence reloading as `Unlimited` and never as null, and the other two owned types on
+`DataSource`. **Only a save-and-reload against a real provider can catch an unmapped property** -
+unit tests construct `LicensingTerms` in memory, where `Retention` is always present, which is why
+635 passing tests said nothing about this.
+
+The seam decision helpers were extracted to `SeamTestDecisions` rather than copied into the new
+class; two hand-rolled versions of "a decision that authorises a write" would drift.
+
+**Test counts change from 640 to 643, and skipped from 8 to 11.** The three new tests need a
+database like the other eight. A skip here means the mapping is **unproven**, not fine.
+
+### Status
+
+Ready for `dotnet ef migrations add DataPlane` to be re-run. **No build or test result is claimed
+for these changes** - this environment has no .NET SDK.
+
+**Changed:** `IngestionRequest.cs`, `DataSourceConfiguration.cs`, `WriteGuardTests.cs`, plus new
+`SourceMappingTests.cs` and `SeamTestDecisions.cs`.
+
+---
+
 ## Outstanding gates
 
 | Gate | Phase | Owner | Notes |
 |---|---|---|---|
-| `dotnet build` | 0, 1, 2 | developer machine | Warnings are errors; must be clean |
-| `dotnet test` | 1, 2 | developer machine | 635 executable cases, none ever run |
-| `dotnet ef migrations add` + `database update` | 1, 2 | developer machine | All five Phase 2 tables validated against live PG16; the migration has not been generated |
+| `dotnet build` | 0, 1, 2 | developer machine | **PASSED** in Release, 2026-08-26 |
+| `dotnet test` | 1, 2 | developer machine | **PASSED** 2026-08-26 — 640 total, 632 passed, 0 failed, 8 skipped |
+| `dotnet ef migrations add` + `database update` | 2 | developer machine | **PENDING RE-RUN** — first attempt failed on two EF model defects, both fixed |
 | Runtime startup | 0, 1 | developer machine | Options validation runs at startup |
-| Integration tests | 1 | developer machine | Need a Docker daemon, else they self-skip |
+| Integration tests | 1, 2 | developer machine | **11** tests **SKIPPED** — no PostgreSQL/Docker. Not counted as passing |
 | Data-plane tests | 2 | written, not run | 407 cases covering stages 1-10 |
 | CI workflow execution | 0 | GitHub | Present, never triggered |

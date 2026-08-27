@@ -33,7 +33,9 @@ public static class FreshnessMapper
         return new FreshnessDto(
             line.SourceId.Value,
             line.Name,
-            line.Cadence.ToString(),
+            // The kind, not the value object's ToString() - same reason as SourceDto. Found by
+            // sweeping after the SourceDto defect rather than by a failing test.
+            line.Cadence.Kind.ToString(),
             line.IsActive,
             line.Assessment.State.ToString(),
             line.Assessment.RuleId,

@@ -1,0 +1,31 @@
+{
+  "_comment": [
+    "A stored bundle and the score it must reproduce, exactly. Regenerate this file only when a",
+    "scoring specification version changes, and change the version when you do - a silent edit here",
+    "turns the one test that proves reproducibility into a test that proves nothing.",
+    "Every figure below is chosen so the arithmetic is exact in decimal: no rounding is involved."
+  ],
+
+  "score": "score.financial-health",
+  "specificationVersion": "v1.0",
+  "value": 0.475,
+  "coverage": 1.0,
+
+  "components": [
+    { "metric": "financial.net-margin",            "raw": 0.1, "normalised": 0.4 },
+    { "metric": "financial.current-ratio",         "raw": 2.0, "normalised": 0.5 },
+    { "metric": "financial.debt-to-equity",        "raw": 1.0, "normalised": 0.5 },
+    { "metric": "financial.free-cash-flow-margin", "raw": 0.1, "normalised": 0.5 }
+  ],
+
+  "bundle": {
+    "financials.revenue": 1000,
+    "financials.net-income": 100,
+    "financials.current-assets": 200,
+    "financials.current-liabilities": 100,
+    "financials.total-debt": 100,
+    "financials.total-equity": 100,
+    "financials.operating-cash-flow": 150,
+    "financials.capital-expenditure": 50
+  }
+}

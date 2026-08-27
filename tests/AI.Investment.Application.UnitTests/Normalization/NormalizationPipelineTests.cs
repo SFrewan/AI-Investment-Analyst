@@ -3,6 +3,7 @@ using AI.Investment.Application.Actions;
 using AI.Investment.Application.Normalization;
 using AI.Investment.Application.UnitTests.Fakes;
 using AI.Investment.Application.UnitTests.Ingestion;
+using AI.Investment.Domain.Actions;
 using AI.Investment.Domain.Common;
 using AI.Investment.Domain.Enums;
 using AI.Investment.Domain.Evidence;

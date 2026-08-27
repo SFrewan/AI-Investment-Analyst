@@ -1,4 +1,5 @@
 using System.Text.Json;
+using AI.Investment.Domain.Evidence;
 using AI.Investment.Domain.Ingestion;
 using AI.Investment.Domain.Observations;
 using AI.Investment.Domain.Sources;

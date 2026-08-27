@@ -72,7 +72,8 @@ public sealed class DataAcquisitionServiceTests
         }
     }
 
-    private static IngestionRun Succeeded(IngestionRequest request, int artifacts = 1)
+    /// <summary>A completed run that archived the given number of payloads.</summary>
+    private static IngestionRun SucceededWith(IngestionRequest request, int artifacts)
     {
         var run = IngestionRun.Start(request, Now);
 
@@ -85,6 +86,19 @@ public sealed class DataAcquisitionServiceTests
 
         return run;
     }
+
+    /// <summary>A completed run that archived one payload.</summary>
+    /// <remarks>
+    /// A separate method rather than an optional parameter on <see cref="SucceededWith"/>, because
+    /// this one is passed as a method group to <c>Func&lt;IngestionRequest, IngestionRun&gt;</c>.
+    /// A method group converts to a delegate only when its parameter list matches exactly -
+    /// optional values are applied at an explicit call, never during the conversion - so a
+    /// two-parameter method cannot become a one-parameter delegate however it is defaulted.
+    /// A separate name rather than an overload, for the same reason the mappers use explicit
+    /// lambdas: an overloaded method group is one more thing for inference to get wrong.
+    /// </remarks>
+    private static IngestionRun Succeeded(IngestionRequest request) =>
+        SucceededWith(request, artifacts: 1);
 
     private static IngestionRun Refused(IngestionRequest request) =>
         IngestionRun.Refuse(request, "ingestion.source-registered@1", "not registered", Now);
@@ -175,7 +189,7 @@ public sealed class DataAcquisitionServiceTests
     [Fact]
     public async Task A_successful_run_that_archived_nothing_is_not_normalised()
     {
-        var gateway = new StubIngestionGateway(request => Succeeded(request, artifacts: 0));
+        var gateway = new StubIngestionGateway(request => SucceededWith(request, artifacts: 0));
         var pipeline = new StubNormalizationPipeline();
 
         var result = await new DataAcquisitionService(gateway, pipeline).AcquireAsync(Request());

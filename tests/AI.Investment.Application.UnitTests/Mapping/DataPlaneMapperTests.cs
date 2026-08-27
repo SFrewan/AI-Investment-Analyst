@@ -36,7 +36,8 @@ public sealed class DataPlaneMapperTests
     private static DataSource Source(
         LicensingTerms? licensing = null,
         bool active = true,
-        UpdateCadence? cadence = null)
+        UpdateCadence? cadence = null,
+        VerificationPolicy? verification = null)
     {
         var source = DataSource.Register(
             SourceId.Create("sec-edgar"),
@@ -47,7 +48,7 @@ public sealed class DataPlaneMapperTests
             [DataCategory.CompanyProfile, DataCategory.RegulatoryFilings],
             cadence ?? UpdateCadence.EventDriven,
             licensing ?? LicensingTerms.OpenData(),
-            VerificationPolicy.Authoritative,
+            verification ?? VerificationPolicy.Authoritative,
             Now.AddYears(-1));
 
         if (active)
@@ -125,6 +126,84 @@ public sealed class DataPlaneMapperTests
         Assert.Equal(365, dto.RetentionLimitDays);
         Assert.False(dto.AllowsRedistribution);
         Assert.True(dto.RequiresAttribution);
+    }
+
+    /// <summary>
+    /// The regression this suite was written to catch and did not.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="VerificationPolicy"/> is a value object, not an enum, and its
+    /// <c>ToString()</c> is a sentence for a human - "confirms alone". The mapper called
+    /// <c>ToString()</c> as if it were an enum, so the wire carried prose that would change
+    /// silently the moment anyone reworded it. The assertion below already expected a stable name;
+    /// what was missing was any assertion that the structure survived at all.
+    /// </remarks>
+    [Fact]
+    public void A_verification_policy_crosses_as_a_stable_name_and_its_structure()
+    {
+        var dto = SourceMapper.ToDto(Source());
+
+        Assert.Equal("Authoritative", dto.VerificationPolicy);
+        Assert.True(dto.CanConfirmAlone);
+        Assert.Equal(1, dto.RequiredIndependentSources);
+
+        // The prose form must not reach the wire under any field.
+        Assert.DoesNotContain("confirms alone", dto.VerificationPolicy, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_other_well_known_verification_policies_have_stable_names()
+    {
+        Assert.Equal(
+            "RequiresCorroboration",
+            SourceMapper.ToDto(Source(verification: VerificationPolicy.RequiresCorroboration))
+                .VerificationPolicy);
+
+        Assert.Equal(
+            "Cautious",
+            SourceMapper.ToDto(Source(verification: VerificationPolicy.Cautious)).VerificationPolicy);
+    }
+
+    [Fact]
+    public void A_policy_that_is_none_of_the_three_is_named_honestly()
+    {
+        var custom = VerificationPolicy.Create(canConfirmAlone: false, requiredIndependentSources: 4);
+
+        var dto = SourceMapper.ToDto(Source(verification: custom));
+
+        // Forced into the nearest well-known name it would be a lie; the two structural fields
+        // carry the actual policy, so "Custom" costs a caller nothing.
+        Assert.Equal("Custom", dto.VerificationPolicy);
+        Assert.False(dto.CanConfirmAlone);
+        Assert.Equal(4, dto.RequiredIndependentSources);
+    }
+
+    /// <summary>
+    /// The same defect as the verification policy, found by sweeping rather than by a failure.
+    /// </summary>
+    /// <remarks>
+    /// <c>UpdateCadence.ToString()</c> renders "Daily (~1.00:00:00)". A caller wanting the kind
+    /// would have had to parse it, and a caller wanting the interval would have had to parse it
+    /// worse.
+    /// </remarks>
+    [Fact]
+    public void A_cadence_crosses_as_its_kind_with_the_interval_beside_it()
+    {
+        var daily = SourceMapper.ToDto(Source(cadence: UpdateCadence.Daily()));
+
+        Assert.Equal("Daily", daily.Cadence);
+        Assert.Equal((int)TimeSpan.FromDays(1).TotalSeconds, daily.ExpectedIntervalSeconds);
+    }
+
+    [Fact]
+    public void A_cadence_that_cannot_be_late_reports_no_interval()
+    {
+        var eventDriven = SourceMapper.ToDto(Source(cadence: UpdateCadence.EventDriven));
+
+        Assert.Equal("EventDriven", eventDriven.Cadence);
+
+        // Null because it genuinely has none, not because the mapper could not find one.
+        Assert.Null(eventDriven.ExpectedIntervalSeconds);
     }
 
     [Fact]

@@ -1,5 +1,6 @@
 using AI.Investment.Api.Configuration;
 using AI.Investment.Application.Sources.RegisterKnownSources;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace AI.Investment.Api.HostedServices;
@@ -47,9 +48,7 @@ public sealed class SourceSeedingHostedService : BackgroundService
     {
         if (!_options.Value.SeedSourcesOnStartup)
         {
-            _logger.LogInformation(
-                "Source seeding is disabled. The registry will contain only what an operator has " +
-                "registered, and ingestion will refuse for anything else.");
+            SeedingLog.Disabled(_logger);
 
             return;
         }
@@ -67,23 +66,14 @@ public sealed class SourceSeedingHostedService : BackgroundService
             var present = results.Count(r => r.Outcome == SourceRegistrationOutcome.AlreadyRegistered);
             var refused = results.Count(r => r.Outcome == SourceRegistrationOutcome.Refused);
 
-            _logger.LogInformation(
-                "Source seeding complete: {Registered} registered, {AlreadyPresent} already present, " +
-                "{Refused} refused.",
-                registered,
-                present,
-                refused);
+            SeedingLog.Complete(_logger, registered, present, refused);
 
             // Policy declined to register something this build shipped. Not an error, but not
             // silent either: it means a source an operator may be expecting is absent, and the
             // symptom - every run for it refusing - would otherwise look like a provider problem.
             foreach (var result in results.Where(r => r.Outcome == SourceRegistrationOutcome.Refused))
             {
-                _logger.LogWarning(
-                    "Source '{SourceId}' was not registered: {Reason} Ingestion for it will refuse " +
-                    "until it is registered.",
-                    result.SourceId,
-                    result.Reason);
+                SeedingLog.SourceRefused(_logger, result.SourceId, result.Reason);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -94,11 +84,54 @@ public sealed class SourceSeedingHostedService : BackgroundService
                               // reason to refuse to serve anything at all.
         catch (Exception ex)
         {
-            _logger.LogError(
-                ex,
-                "Source seeding failed. The instance is starting with an incomplete registry; " +
-                "ingestion will refuse for any source that is missing.");
+            SeedingLog.SeedingFailed(_logger, ex);
         }
 #pragma warning restore CA1031
     }
+}
+
+/// <summary>Source-generated log messages for <see cref="SourceSeedingHostedService"/>.</summary>
+/// <remarks>
+/// See <see cref="SweepLog"/> for why these are static methods taking an explicit
+/// <see cref="ILogger"/> rather than instance methods on the service.
+/// </remarks>
+internal static partial class SeedingLog
+{
+    [LoggerMessage(
+        EventId = 2200,
+        Level = LogLevel.Information,
+        Message = "Source seeding is disabled. The registry will contain only what an operator " +
+                  "has registered, and ingestion will refuse for anything else.")]
+    internal static partial void Disabled(ILogger logger);
+
+    [LoggerMessage(
+        EventId = 2201,
+        Level = LogLevel.Information,
+        Message = "Source seeding complete: {Registered} registered, {AlreadyPresent} already " +
+                  "present, {Refused} refused.")]
+    internal static partial void Complete(
+        ILogger logger,
+        int registered,
+        int alreadyPresent,
+        int refused);
+
+    /// <summary>A source this build ships was not registered.</summary>
+    /// <remarks>
+    /// Named individually rather than counted, because the symptom an operator will actually meet
+    /// is every run for that source refusing - which looks like a provider problem until this line
+    /// says otherwise.
+    /// </remarks>
+    [LoggerMessage(
+        EventId = 2202,
+        Level = LogLevel.Warning,
+        Message = "Source '{SourceId}' was not registered: {Reason} Ingestion for it will refuse " +
+                  "until it is registered.")]
+    internal static partial void SourceRefused(ILogger logger, string sourceId, string reason);
+
+    [LoggerMessage(
+        EventId = 2203,
+        Level = LogLevel.Error,
+        Message = "Source seeding failed. The instance is starting with an incomplete registry; " +
+                  "ingestion will refuse for any source that is missing.")]
+    internal static partial void SeedingFailed(ILogger logger, Exception exception);
 }

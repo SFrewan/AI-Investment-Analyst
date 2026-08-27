@@ -20,7 +20,7 @@ namespace AI.Investment.Integration.Tests;
 /// authorisation window is open. Two mechanisms, because one can be forgotten at a call site.
 /// </remarks>
 [Collection(nameof(SharedPostgresDatabase))]
-public sealed class WriteGuardTests
+public sealed class WriteGuardTests : IAsyncLifetime
 {
     private static readonly DateTime Now = new(2026, 8, 24, 12, 0, 0, DateTimeKind.Utc);
 
@@ -29,12 +29,34 @@ public sealed class WriteGuardTests
     public WriteGuardTests(PostgresFixture fixture) => _fixture = fixture;
 
     /// <summary>
+    /// Empties the shared test database before each test in this class.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The identifiers below - <c>ALLOW1</c>, <c>BYPASS1</c> - are fixed on purpose: they name the
+    /// case under test and read in a failure message. Fixed identifiers plus a database that
+    /// outlives the run is what produced <c>23505 duplicate key value violates unique constraint
+    /// "ix_companies_ticker"</c> on every run after the first, so the database is emptied here
+    /// rather than the identifiers being made unique. Uniqueness in the test data would have
+    /// hidden the leak; it would not have removed it, and the next test to reuse a value would
+    /// have found it again.
+    /// </para>
+    /// <para>
+    /// Before each test, not after: a failed test then leaves its rows behind to be looked at, and
+    /// the next test is still clean.
+    /// </para>
+    /// </remarks>
+    public Task InitializeAsync() => _fixture.ResetAsync();
+
+    public Task DisposeAsync() => Task.CompletedTask;
+
+    /// <summary>
     /// The headline invariant: a repository write plus SaveChanges, outside the seam, is refused.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public async Task A_domain_write_without_an_authorisation_window_is_refused()
     {
-        if (!Skip()) { return; }
+        Skip.IfNot(_fixture.Available, _fixture.UnavailableReason);
 
         var authorization = new ScopedWriteAuthorization();
         await using var context = _fixture.CreateContext(authorization);
@@ -47,10 +69,10 @@ public sealed class WriteGuardTests
         Assert.Contains("IActionGateway", exception.Message, StringComparison.Ordinal);
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task A_domain_write_inside_an_authorisation_window_succeeds()
     {
-        if (!Skip()) { return; }
+        Skip.IfNot(_fixture.Available, _fixture.UnavailableReason);
 
         var authorization = new ScopedWriteAuthorization();
         await using var context = _fixture.CreateContext(authorization);
@@ -58,7 +80,7 @@ public sealed class WriteGuardTests
         var ticker = Ticker.Create("ALLOW1");
         var company = NewCompany(ticker);
 
-        using (authorization.Authorize(ExecuteDecision()))
+        using (authorization.Authorize(SeamTestDecisions.ExecuteDecision(Now)))
         {
             context.Companies.Add(company);
             await context.SaveChangesAsync();
@@ -72,16 +94,16 @@ public sealed class WriteGuardTests
     /// Audit rows must be writable precisely when nothing is authorised - that is the situation a
     /// denial creates, and a denial is one of the most important things to record.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public async Task An_audit_record_can_be_written_when_nothing_is_authorised()
     {
-        if (!Skip()) { return; }
+        Skip.IfNot(_fixture.Available, _fixture.UnavailableReason);
 
         var authorization = new ScopedWriteAuthorization();
         await using var context = _fixture.CreateContext(authorization);
 
         var sink = new Infrastructure.Auditing.EfAuditSink(context);
-        var proposal = NewProposal();
+        var proposal = SeamTestDecisions.NewProposal(Now);
         var decision = PolicyDecision.Deny(proposal, "refused for the test", ["test@1"], Now);
 
         await sink.RecordAsync(AuditRecord.ForPolicyDecision(proposal, decision, Now));
@@ -101,15 +123,15 @@ public sealed class WriteGuardTests
     /// <summary>
     /// An audit trail the application can rewrite is not an audit trail.
     /// </summary>
-    [Fact]
+    [SkippableFact]
     public async Task An_audit_record_cannot_be_modified()
     {
-        if (!Skip()) { return; }
+        Skip.IfNot(_fixture.Available, _fixture.UnavailableReason);
 
         var authorization = new ScopedWriteAuthorization();
         await using var context = _fixture.CreateContext(authorization);
 
-        var proposal = NewProposal();
+        var proposal = SeamTestDecisions.NewProposal(Now);
         var decision = PolicyDecision.Deny(proposal, "refused for the test", ["test@1"], Now);
         var sink = new Infrastructure.Auditing.EfAuditSink(context);
 
@@ -121,15 +143,15 @@ public sealed class WriteGuardTests
         await Assert.ThrowsAsync<UnauthorizedWriteException>(() => context.SaveChangesAsync());
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task An_audit_record_cannot_be_deleted()
     {
-        if (!Skip()) { return; }
+        Skip.IfNot(_fixture.Available, _fixture.UnavailableReason);
 
         var authorization = new ScopedWriteAuthorization();
         await using var context = _fixture.CreateContext(authorization);
 
-        var proposal = NewProposal();
+        var proposal = SeamTestDecisions.NewProposal(Now);
         var decision = PolicyDecision.Deny(proposal, "refused for the test", ["test@1"], Now);
         await new Infrastructure.Auditing.EfAuditSink(context)
             .RecordAsync(AuditRecord.ForPolicyDecision(proposal, decision, Now));
@@ -156,22 +178,22 @@ public sealed class WriteGuardTests
     /// These two tests are what hold that distinction in place.
     /// </para>
     /// </remarks>
-    [Fact]
+    [SkippableFact]
     public async Task An_audit_record_cannot_be_modified_even_inside_an_authorisation_window()
     {
-        if (!Skip()) { return; }
+        Skip.IfNot(_fixture.Available, _fixture.UnavailableReason);
 
         var authorization = new ScopedWriteAuthorization();
         await using var context = _fixture.CreateContext(authorization);
 
-        var proposal = NewProposal();
+        var proposal = SeamTestDecisions.NewProposal(Now);
         var decision = PolicyDecision.Deny(proposal, "refused for the test", ["test@1"], Now);
         await new Infrastructure.Auditing.EfAuditSink(context)
             .RecordAsync(AuditRecord.ForPolicyDecision(proposal, decision, Now));
 
         var tracked = await context.AuditRecords.FirstAsync(a => a.ProposalId == proposal.ProposalId);
 
-        using (authorization.Authorize(ExecuteDecision()))
+        using (authorization.Authorize(SeamTestDecisions.ExecuteDecision(Now)))
         {
             context.Entry(tracked).State = EntityState.Modified;
 
@@ -182,15 +204,15 @@ public sealed class WriteGuardTests
         }
     }
 
-    [Fact]
+    [SkippableFact]
     public async Task An_execution_record_cannot_be_deleted_even_inside_an_authorisation_window()
     {
-        if (!Skip()) { return; }
+        Skip.IfNot(_fixture.Available, _fixture.UnavailableReason);
 
         var authorization = new ScopedWriteAuthorization();
         await using var context = _fixture.CreateContext(authorization);
 
-        var proposal = NewProposal();
+        var proposal = SeamTestDecisions.NewProposal(Now);
         var decision = PolicyDecision.Execute(proposal, "permitted for the test", ["test@1"], Now);
         var execution = ActionExecution.Start(proposal, decision, Now);
         execution.MarkSucceeded(Now);
@@ -212,13 +234,21 @@ public sealed class WriteGuardTests
     }
 
     /// <summary>
-    /// The database, not the application, is what makes deduplication correct under the
-    /// concurrency that retries create.
+    /// A key claimed twice through the same context is refused the second time - and refused, not
+    /// thrown at.
     /// </summary>
-    [Fact]
+    /// <remarks>
+    /// This is the path where the store answers from its own identity map. It used to fail with
+    /// <c>InvalidOperationException: another instance with the same key value for
+    /// {'IdempotencyKey'} is already being tracked</c>, thrown by <c>Add</c> before any SQL was
+    /// sent - so the store's unique-violation handler never saw it and a caller asking a
+    /// reasonable question got an exception instead of an answer. The test below covers the other
+    /// path, where the database is the one that decides.
+    /// </remarks>
+    [SkippableFact]
     public async Task An_idempotency_key_can_be_claimed_only_once()
     {
-        if (!Skip()) { return; }
+        Skip.IfNot(_fixture.Available, _fixture.UnavailableReason);
 
         await using var context = _fixture.CreateContext(new ScopedWriteAuthorization());
         var store = new EfIdempotencyStore(context);
@@ -228,39 +258,41 @@ public sealed class WriteGuardTests
         Assert.False(await store.TryClaimAsync(key, Guid.NewGuid(), Now));
     }
 
-    private bool Skip()
+    /// <summary>
+    /// The database, not the application, is what makes deduplication correct under the
+    /// concurrency that retries create.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two contexts, because that is the shape a retry actually has: the second attempt arrives in
+    /// a different scope, with a different context, whose identity map knows nothing about the
+    /// first. Nothing in the application can answer here - the refusal can only come from the
+    /// primary key on <c>processed_actions</c>, which is the whole reason the claim is an INSERT.
+    /// </para>
+    /// <para>
+    /// Written alongside the identity-map fix above so that the short-circuit added there cannot
+    /// quietly become the only thing being tested. A store that stopped inserting altogether would
+    /// still pass the test above; it fails this one.
+    /// </para>
+    /// </remarks>
+    [SkippableFact]
+    public async Task An_idempotency_key_claimed_by_one_context_is_refused_to_another()
     {
-        if (_fixture.Available)
-        {
-            return true;
-        }
+        Skip.IfNot(_fixture.Available, _fixture.UnavailableReason);
 
-        // Reported rather than failed: no database is an environment gap, not a code defect.
-        // CI must supply one, or these tests prove nothing.
-        Console.WriteLine($"SKIPPED: {_fixture.UnavailableReason}");
-        return false;
+        var key = $"test.claim:{Guid.NewGuid():n}";
+
+        await using var claiming = _fixture.CreateContext(new ScopedWriteAuthorization());
+        Assert.True(
+            await new EfIdempotencyStore(claiming).TryClaimAsync(key, Guid.NewGuid(), Now));
+
+        await using var retrying = _fixture.CreateContext(new ScopedWriteAuthorization());
+        Assert.False(
+            await new EfIdempotencyStore(retrying).TryClaimAsync(key, Guid.NewGuid(), Now));
     }
+
 
     private static Company NewCompany(Ticker ticker) =>
         Company.Create(CompanyId.New(), $"Test {ticker.Value}", ticker, Now);
 
-    private static ActionProposal NewProposal() =>
-        ActionProposal.Create(
-            CorrelationId.New(),
-            Capability.ReferenceDataManagement,
-            ActionType.Create("test.action"),
-            ActionTarget.Create("Test"),
-            new TestParameters(),
-            ActionEconomics.NoFinancialEffect(),
-            ProposedBy.Service("integration-test", "1.0"),
-            Guid.NewGuid().ToString("n"),
-            Now);
-
-    private static PolicyDecision ExecuteDecision() =>
-        PolicyDecision.Execute(NewProposal(), "permitted for the test", ["test@1"], Now);
-
-    private sealed record TestParameters : IActionParameters
-    {
-        public string Describe() => "integration test parameters";
-    }
 }

@@ -98,18 +98,53 @@ public sealed class Program
         return app;
     }
 
+    /// <summary>
+    /// Configures the host's logger from configuration and DI.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong><c>preserveStaticLogger: true</c> is load-bearing, not decoration.</strong> The
+    /// bootstrap logger in <see cref="Main"/> is a Serilog <c>ReloadableLogger</c> held in the
+    /// static <c>Log.Logger</c>. With the default <c>preserveStaticLogger: false</c>, building the
+    /// host <em>freezes</em> that reloadable logger - and a frozen logger cannot be frozen again.
+    /// </para>
+    /// <para>
+    /// One host per process makes that invisible. A test process does not: every
+    /// <c>WebApplicationFactory</c> fixture builds its own host, so the second build threw
+    /// <c>InvalidOperationException: The logger is already frozen</c>, the entry point exited
+    /// without producing a host, and every API test failed with "The entry point exited without
+    /// ever building an IHost". Three test classes, three fixtures, three failures.
+    /// </para>
+    /// <para>
+    /// Preserving the static logger separates the two paths honestly rather than papering over the
+    /// collision. The host's <c>ILogger&lt;T&gt;</c> - which is what controllers, hosted services
+    /// and the framework use - is still built from this delegate, with configuration, enrichment
+    /// and DI. The static <c>Log</c> stays the bootstrap console logger, which is all
+    /// <see cref="Main"/> needs it for: the two messages it writes are a start-up line and a fatal
+    /// exception, both of which must work <em>before</em> a host exists, and both of which go to
+    /// the console either way because that is this application's only sink.
+    /// </para>
+    /// <para>
+    /// The alternative - a fresh bootstrap logger per build - would also compile, and would race:
+    /// xUnit runs test collections in parallel, so two fixtures would be assigning and freezing the
+    /// same process-wide static at once. Removing the shared mutable static from the host-build
+    /// path is the fix; making it churn faster is not.
+    /// </para>
+    /// </remarks>
     private static void ConfigureLogging(WebApplicationBuilder builder)
     {
-        builder.Host.UseSerilog((context, services, configuration) => configuration
-            .ReadFrom.Configuration(context.Configuration)
-            .ReadFrom.Services(services)
-            .Enrich.FromLogContext()
-            .Enrich.WithProperty(
-                "Application",
-                context.Configuration["Observability:ServiceName"] ?? "AI.Investment.Api")
-            .Enrich.WithProperty("Environment", context.HostingEnvironment.EnvironmentName)
-            .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
-            .WriteTo.Console());
+        builder.Host.UseSerilog(
+            (context, services, configuration) => configuration
+                .ReadFrom.Configuration(context.Configuration)
+                .ReadFrom.Services(services)
+                .Enrich.FromLogContext()
+                .Enrich.WithProperty(
+                    "Application",
+                    context.Configuration["Observability:ServiceName"] ?? "AI.Investment.Api")
+                .Enrich.WithProperty("Environment", context.HostingEnvironment.EnvironmentName)
+                .MinimumLevel.Override("Microsoft.AspNetCore", LogEventLevel.Warning)
+                .WriteTo.Console(),
+            preserveStaticLogger: true);
     }
 
     private static void ConfigureServices(WebApplicationBuilder builder)

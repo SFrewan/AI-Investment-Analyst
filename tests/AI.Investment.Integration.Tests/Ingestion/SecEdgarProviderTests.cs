@@ -125,7 +125,7 @@ public sealed class SecEdgarSourceTests
 
 public sealed class SecEdgarOptionsTests
 {
-    private static IReadOnlyList<string> Validate(SecEdgarOptions options) =>
+    private static List<string> Validate(SecEdgarOptions options) =>
         options
             .Validate(new System.ComponentModel.DataAnnotations.ValidationContext(options))
             .Select(r => r.ErrorMessage ?? string.Empty)

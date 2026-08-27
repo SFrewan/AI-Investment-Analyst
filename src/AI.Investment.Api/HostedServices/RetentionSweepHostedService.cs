@@ -1,5 +1,6 @@
 using AI.Investment.Api.Configuration;
 using AI.Investment.Application.Retention;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
 namespace AI.Investment.Api.HostedServices;
@@ -54,16 +55,13 @@ public sealed class RetentionSweepHostedService : BackgroundService
 
         if (!options.RunRetentionSweep)
         {
-            _logger.LogInformation(
-                "The retention sweep is disabled on this instance. Archived payloads past their " +
-                "licensed limit will not be deleted until an instance runs it.");
+            SweepLog.Disabled(_logger);
 
             return;
         }
 
-        _logger.LogInformation(
-            "Retention sweep enabled: first sweep in {Delay}, then every {Interval}, " +
-            "{BatchSize} payloads per sweep.",
+        SweepLog.Enabled(
+            _logger,
             options.RetentionSweepDelay,
             options.RetentionSweepInterval,
             options.RetentionSweepBatchSize);
@@ -84,7 +82,7 @@ public sealed class RetentionSweepHostedService : BackgroundService
         {
             // Shutting down. Not a failure, and the next start continues where this left off -
             // the archive is the state, so nothing is lost by stopping mid-sweep.
-            _logger.LogInformation("Retention sweep stopping with the host.");
+            SweepLog.Stopping(_logger);
         }
     }
 
@@ -99,7 +97,14 @@ public sealed class RetentionSweepHostedService : BackgroundService
             var sweep = scope.ServiceProvider.GetRequiredService<IRetentionSweep>();
             var summary = await sweep.SweepAsync(batchSize, cancellationToken).ConfigureAwait(false);
 
-            _logger.LogInformation("Retention sweep finished: {Summary}", summary);
+            SweepLog.Finished(
+                _logger,
+                summary.Examined,
+                summary.Retained,
+                summary.Deleted,
+                summary.DeletionsRefused,
+                summary.Failed,
+                summary.Reached);
 
             if (summary.Outstanding > 0)
             {
@@ -107,11 +112,8 @@ public sealed class RetentionSweepHostedService : BackgroundService
                 // installation that requires human approval for irreversible actions - which is
                 // the default - and a real compliance exposure on one that does not. Either way it
                 // is a number somebody should be looking at rather than one buried in a debug log.
-                _logger.LogWarning(
-                    "{Outstanding} payloads require deletion and remain archived " +
-                    "({Refused} refused by policy, {Failed} failed). Retention deletion is " +
-                    "irreversible and requires approval unless this installation has granted " +
-                    "automatic execution for the data-retention capability.",
+                SweepLog.Outstanding(
+                    _logger,
                     summary.Outstanding,
                     summary.DeletionsRefused,
                     summary.Failed);
@@ -121,10 +123,7 @@ public sealed class RetentionSweepHostedService : BackgroundService
             {
                 // The batch size stopped it, not the end of the archive. Said out loud so that a
                 // permanently-behind sweep is visible rather than looking like a clean one.
-                _logger.LogInformation(
-                    "The sweep stopped at its batch size of {BatchSize} with more of the archive " +
-                    "unexamined. The next sweep continues.",
-                    batchSize);
+                SweepLog.StoppedAtBatchSize(_logger, batchSize);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -135,11 +134,102 @@ public sealed class RetentionSweepHostedService : BackgroundService
                               // night. Exiting the loop would leave it unmet in silence.
         catch (Exception ex)
         {
-            _logger.LogError(
-                ex,
-                "A retention sweep failed. The timer continues; the next sweep will re-examine " +
-                "everything this one did not reach.");
+            SweepLog.SweepFailed(_logger, ex);
         }
 #pragma warning restore CA1031
     }
+}
+
+/// <summary>Source-generated log messages for <see cref="RetentionSweepHostedService"/>.</summary>
+/// <remarks>
+/// <para>
+/// CA1848. The generator emits one cached <c>LoggerMessage</c> delegate per message, so a message
+/// whose level is disabled costs a level check rather than an allocation and a template parse. On
+/// a background sweep that is mostly noise-suppression, but the rule is enforced repository-wide
+/// and satisfying it honestly is cheaper than arguing with it once per call site.
+/// </para>
+/// <para>
+/// Written as static methods taking an explicit <see cref="ILogger"/> - the form the generator has
+/// supported since .NET 6 - rather than as instance methods on the service. Instance logging
+/// methods work only when the generator can find an <c>ILogger</c> field, which is a newer and
+/// more fragile contract to depend on.
+/// </para>
+/// <para>
+/// <see cref="Finished"/> takes the summary's counts individually rather than the record itself.
+/// A structured sink can then filter on <c>Failed</c> or <c>Deleted</c> directly, which is the
+/// whole point of structured logging; passing the record would have produced one opaque string.
+/// </para>
+/// </remarks>
+internal static partial class SweepLog
+{
+    [LoggerMessage(
+        EventId = 2100,
+        Level = LogLevel.Information,
+        Message = "The retention sweep is disabled on this instance. Archived payloads past their " +
+                  "licensed limit will not be deleted until an instance runs it.")]
+    internal static partial void Disabled(ILogger logger);
+
+    [LoggerMessage(
+        EventId = 2101,
+        Level = LogLevel.Information,
+        Message = "Retention sweep enabled: first sweep in {Delay}, then every {Interval}, " +
+                  "{BatchSize} payloads per sweep.")]
+    internal static partial void Enabled(
+        ILogger logger,
+        TimeSpan delay,
+        TimeSpan interval,
+        int batchSize);
+
+    [LoggerMessage(
+        EventId = 2102,
+        Level = LogLevel.Information,
+        Message = "Retention sweep stopping with the host.")]
+    internal static partial void Stopping(ILogger logger);
+
+    [LoggerMessage(
+        EventId = 2103,
+        Level = LogLevel.Information,
+        Message = "Retention sweep finished: examined {Examined}, retained {Retained}, " +
+                  "deleted {Deleted}, refused {Refused}, failed {Failed}, complete {Complete}.")]
+    internal static partial void Finished(
+        ILogger logger,
+        int examined,
+        int retained,
+        int deleted,
+        int refused,
+        int failed,
+        bool complete);
+
+    /// <summary>Payloads a licence says must go which are still on disk.</summary>
+    /// <remarks>
+    /// A warning rather than information, deliberately. Expected on an installation that requires
+    /// human approval for irreversible actions - which is the default - and a real compliance
+    /// exposure on one that does not. Either way it is a number somebody should be looking at.
+    /// </remarks>
+    [LoggerMessage(
+        EventId = 2104,
+        Level = LogLevel.Warning,
+        Message = "{Outstanding} payloads require deletion and remain archived ({Refused} refused " +
+                  "by policy, {Failed} failed). Retention deletion is irreversible and requires " +
+                  "approval unless this installation has granted automatic execution for the " +
+                  "data-retention capability.")]
+    internal static partial void Outstanding(
+        ILogger logger,
+        int outstanding,
+        int refused,
+        int failed);
+
+    [LoggerMessage(
+        EventId = 2105,
+        Level = LogLevel.Information,
+        Message = "The sweep stopped at its batch size of {BatchSize} with more of the archive " +
+                  "unexamined. The next sweep continues.")]
+    internal static partial void StoppedAtBatchSize(ILogger logger, int batchSize);
+
+    [LoggerMessage(
+        EventId = 2106,
+        Level = LogLevel.Error,
+        Message = "A retention sweep failed. The timer continues; the next sweep will re-examine " +
+                  "everything this one did not reach.")]
+    internal static partial void SweepFailed(ILogger logger, Exception exception);
 }

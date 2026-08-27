@@ -20,7 +20,16 @@ namespace AI.Investment.Application.Companies.CreateCompany;
 /// </remarks>
 public static class CreateCompanyValidator
 {
-    public static IReadOnlyList<string> Validate(CreateCompanyCommand command)
+    /// <summary>Every shape problem with the command, or an empty list.</summary>
+    /// <remarks>
+    /// Returns <see cref="List{T}"/> rather than <see cref="IReadOnlyList{T}"/>, which CA1859 asks
+    /// for and which costs nothing here: the list is allocated fresh on every call, and its one
+    /// caller counts it and hands it to <c>ValidationFailedException</c>, which copies. There is no
+    /// shared state for the read-only signature to have been protecting. Noted rather than changed
+    /// silently - the original signature was a deliberate immutability signal, and it is being
+    /// dropped because nothing was relying on it, not because the analyzer asked loudly.
+    /// </remarks>
+    public static List<string> Validate(CreateCompanyCommand command)
     {
         ArgumentNullException.ThrowIfNull(command);
 

@@ -16,6 +16,20 @@ namespace AI.Investment.Application.Sources;
 /// exercise.
 /// </para>
 /// </remarks>
+/// <param name="Cadence">
+/// The cadence <em>kind</em> - a stable name such as <c>Daily</c> - never the value object's
+/// <c>ToString()</c>, which is a human sentence and would put unstable prose on the wire.
+/// </param>
+/// <param name="ExpectedIntervalSeconds">
+/// How often the source is expected to publish, or null when it cannot be late (event-driven and
+/// on-demand sources). Null is a stated fact, not a missing value.
+/// </param>
+/// <param name="VerificationPolicy">
+/// A stable name for the policy - <c>Authoritative</c>, <c>RequiresCorroboration</c>,
+/// <c>Cautious</c>, or <c>Custom</c> for one built with <c>VerificationPolicy.Create</c>.
+/// </param>
+/// <param name="CanConfirmAlone">Whether this source alone can produce confirmed information.</param>
+/// <param name="RequiredIndependentSources">How many sources must agree when it cannot.</param>
 public sealed record SourceDto(
     string Id,
     string Name,
@@ -24,9 +38,12 @@ public sealed record SourceDto(
     string Region,
     IReadOnlyList<string> Categories,
     string Cadence,
+    int? ExpectedIntervalSeconds,
     bool IsActive,
     SourceLicensingDto Licensing,
     string VerificationPolicy,
+    bool CanConfirmAlone,
+    int RequiredIndependentSources,
     string ReliabilityGrade,
     DateTime RegisteredAtUtc,
     DateTime UpdatedAtUtc);
@@ -63,10 +80,17 @@ public static class SourceMapper
             source.Authority.ToString(),
             source.Region.Code,
             source.Categories.Select(c => c.ToString()).ToList(),
-            source.Cadence.ToString(),
+
+            // The kind, not the value object's ToString(). `UpdateCadence.ToString()` renders
+            // "Daily (~1.00:00:00)" - a sentence for a human reading a log, and unstable prose for
+            // anything reading this DTO.
+            source.Cadence.Kind.ToString(),
+            source.Cadence.ExpectedInterval is { } interval ? (int)interval.TotalSeconds : null,
             source.IsActive,
             ToDto(source.Licensing),
-            source.Verification.ToString(),
+            NameOf(source.Verification),
+            source.Verification.CanConfirmAlone,
+            source.Verification.RequiredIndependentSources,
             source.Reliability.ToString(),
             source.RegisteredAtUtc,
             source.UpdatedAtUtc);
@@ -86,5 +110,44 @@ public static class SourceMapper
             // days or years, and a serialised TimeSpan is a shape nobody reads correctly.
             licensing.Retention.IsBounded ? (int)licensing.Retention.MaximumAge!.Value.TotalDays : null,
             licensing.Notes);
+    }
+
+    /// <summary>A stable name for a verification policy.</summary>
+    /// <remarks>
+    /// <para>
+    /// <c>VerificationPolicy.ToString()</c> renders "confirms alone" or "requires N independent
+    /// sources" - a sentence written for a human reading a log. Putting it on the wire was a
+    /// defect: the wording can be changed without anyone realising a client depended on it, and
+    /// two genuinely different policies can read almost identically.
+    /// </para>
+    /// <para>
+    /// The name alone is not enough either, because <c>VerificationPolicy.Create</c> admits
+    /// policies that are none of the three well-known ones. So the DTO carries the name <em>and</em>
+    /// the two facts the policy actually consists of - the same choice the persistence layer
+    /// already made, where verification is an owned type with a column per component, and the same
+    /// choice <see cref="SourceLicensingDto"/> makes for permissions.
+    /// </para>
+    /// </remarks>
+    private static string NameOf(VerificationPolicy policy)
+    {
+        if (policy == VerificationPolicy.Authoritative)
+        {
+            return nameof(VerificationPolicy.Authoritative);
+        }
+
+        if (policy == VerificationPolicy.RequiresCorroboration)
+        {
+            return nameof(VerificationPolicy.RequiresCorroboration);
+        }
+
+        if (policy == VerificationPolicy.Cautious)
+        {
+            return nameof(VerificationPolicy.Cautious);
+        }
+
+        // Built by Create with values matching none of the three. Named honestly rather than
+        // forced into the nearest one: CanConfirmAlone and RequiredIndependentSources carry the
+        // actual policy, and a caller that cares can read them.
+        return "Custom";
     }
 }

@@ -132,7 +132,7 @@ public sealed class SourcesController : ControllerBase
     /// caller that their well-formed id does not exist, which is a different and untrue statement -
     /// and one that sends them looking in the registry rather than at what they sent.
     /// </remarks>
-    private IActionResult? Validate(string id, out SourceId sourceId)
+    private ObjectResult? Validate(string id, out SourceId sourceId)
     {
         try
         {

@@ -5,6 +5,7 @@ using AI.Investment.Domain.Enums;
 using AI.Investment.Domain.Ingestion;
 using AI.Investment.Domain.Normalization;
 using AI.Investment.Domain.Observations;
+using AI.Investment.Domain.Sources;
 
 namespace AI.Investment.Application.Normalization;
 

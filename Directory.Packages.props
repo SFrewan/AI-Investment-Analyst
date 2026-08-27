@@ -77,6 +77,17 @@
     <!-- xUnit: the .NET default, and the one the SDK templates target. -->
     <PackageVersion Include="xunit" Version="2.9.2" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="2.8.2" />
+
+    <!--
+      Dynamic skip, which xUnit 2.x cannot do on its own.
+
+      Without it a test whose precondition is unmet can only return early - and a test that
+      returns normally is reported PASSED. Eight write-guard tests did exactly that when no
+      database was reachable: they printed "SKIPPED" to the console and were counted as green.
+      A verification gate that reports unproven tests as passed is worse than one that reports
+      them as skipped, because the summary line is what people read.
+    -->
+    <PackageVersion Include="Xunit.SkippableFact" Version="1.5.85" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
     <PackageVersion Include="coverlet.collector" Version="6.0.2" />
 

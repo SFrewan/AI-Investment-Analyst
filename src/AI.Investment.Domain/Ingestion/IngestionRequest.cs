@@ -43,6 +43,38 @@ public sealed record IngestionRequest
         RequestedAtUtc = requestedAtUtc;
     }
 
+    /// <summary>Required by the persistence provider. Not for application use.</summary>
+    /// <remarks>
+    /// <para>
+    /// EF materialises this type through this constructor and then sets each property. It cannot
+    /// use the constructor above, because two of that constructor's parameters -
+    /// <see cref="Subject"/> and <see cref="Window"/> - are owned types, and an owned reference is
+    /// a <em>navigation</em>. EF binds constructor parameters to mapped scalar properties only; it
+    /// cannot set a navigation through a constructor at all. Without a parameterless constructor
+    /// there is no candidate it can bind, and model building fails with "No suitable constructor
+    /// was found for entity type 'IngestionRequest'".
+    /// </para>
+    /// <para>
+    /// This is the same pattern every aggregate in this model already uses - <c>Observation</c>,
+    /// <c>DataSource</c>, <c>IngestionRun</c>, <c>QuarantinedPayload</c> - and it changes nothing
+    /// about how application code constructs a request: <see cref="Create"/> remains the only way
+    /// in, and every validation rule it applies is untouched.
+    /// </para>
+    /// <para>
+    /// The non-nullable properties are assigned <c>null!</c> here for the same reason they are on
+    /// those aggregates: the provider overwrites every one of them immediately after construction,
+    /// and the alternative - making them nullable - would weaken the type for every legitimate
+    /// caller to accommodate a materialisation step that never observes these values.
+    /// </para>
+    /// </remarks>
+    private IngestionRequest()
+    {
+        SourceId = null!;
+        Region = null!;
+        Subject = null!;
+        CorrelationId = null!;
+    }
+
     public SourceId SourceId { get; }
 
     public DataCategory Category { get; }

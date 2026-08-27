@@ -1,6 +1,6 @@
 # Phase 2 — Global data and intelligence foundation
 
-**Status:** Code complete — all ten stages implemented; **verification pending**
+**Status:** Build and tests green; **NOT Verified** — two gates outstanding
 **Last updated:** 2026-08-26
 
 ---
@@ -9,11 +9,18 @@
 > archive, ledger, normalisation, retention, freshness, the API surface and the architecture tests.
 > Stage 7 was taken ahead of stage 6 deliberately — see section 15.
 >
-> **Nothing in Phase 2 has ever been compiled, executed or migrated.** 635 executable test cases
-> exist across the solution and none has run; the five new tables have been validated against a
-> live PostgreSQL 16.13 instance by hand but the EF migration has not been generated. Everything
-> below describes code that exists in the repository and static verification that was actually
-> performed. No build, test or runtime result is claimed. See sections 12 and 18.
+> **Builds clean, tests green, not yet Verified.** As of 2026-08-26 `dotnet restore` and
+> `dotnet build -c Release` pass, and `dotnet test -c Release` reports **640 total, 632 passed,
+> 0 failed, 8 skipped** in 17.8s.
+>
+> The 8 skipped are every test in `WriteGuardTests`, and they are **not counted as passing**. They
+> cover the persistence half of the safety seam and need a PostgreSQL instance or a Docker daemon
+> on the machine running the tests.
+>
+> Two gates remain and neither can be run from the assistant's environment: the **`DataPlane`
+> migration**, which has never been generated (the model snapshot still holds only the four Phase 1
+> entities), and those **8 write-guard tests**. Everything else available without a .NET SDK has
+> been run and passed — see section 12.
 
 ## 1. Phase objective
 
@@ -1129,22 +1136,28 @@ worthless if the address is computed differently by a future version.
 
 ## 12. Verification results
 
-**Not verified.**
+**Not Verified.** Build and tests are green; two required gates have not run.
 
 | Gate | Status |
 |---|---|
-| `dotnet build` | **PENDING LOCAL VERIFICATION** — no .NET SDK reachable from the assistant's environment |
-| `dotnet test` | **PENDING LOCAL VERIFICATION** — none of Phase 2's cases has been executed |
-| Runtime | Not applicable yet |
-| Database | Not applicable — no schema change |
-| Safety | Rules exist in code and in tests; not executed |
-| Static review | Passed, including one analyzer fix and two defects found (section 15) |
-| Snapshot drift check | **Passed** — model snapshot still contains exactly the four Phase 1 entities |
-| Structural check on every changed file | **Passed** — brace/paren balance with strings and comments stripped |
+| `dotnet restore` | **PASSED** (2026-08-26, locally) |
+| `dotnet build -c Release` — whole solution | **PASSED** (2026-08-26, locally) |
+| `dotnet test -c Release` | **PASSED** — 640 total, **632 passed, 0 failed, 8 skipped**, 17.8s |
+| Architecture tests (`LayeringRuleTests`, `DataPlaneRuleTests`) | **PASSED** — within the 632 |
+| Safety tests (`AI.Investment.Safety.Tests`) | **PASSED** — within the 632 |
+| API startup and runtime (`WebApplicationFactory` boots the real host, `/health/live` answers) | **PASSED** — within the 632 |
+| EF model completeness — every mapped property configured or ignored | **PASSED** — 9 configurations |
+| Full 9-table schema against live PostgreSQL 16.13 | **PASSED** — 103 columns, 31 indexes |
+| Data-plane walkthrough at the storage level | **PASSED** — 15 checks |
+| EDGAR normaliser fields vs the live submissions document | **PASSED** — 9 fields, expected types |
+| Static battery (type resolution, method groups, layering, interfaces, braces, non-ASCII) | **PASSED** |
+| **`dotnet ef migrations add DataPlane` + `database update`** | **PENDING RE-RUN** — first attempt failed on two EF model defects (`IngestionRequest` constructor, unmapped `LicensingTerms.Retention`), both fixed 2026-08-26 |
+| **11 database integration tests** | **SKIPPED** — no PostgreSQL/Docker on the machine running tests. **Not counted as passing** |
 
-The structural check is a weak instrument and is recorded as such: it catches gross damage and
-proves nothing about type correctness. It is not a substitute for a compiler and is not offered
-as one.
+The API tests are worth calling out as runtime verification rather than unit testing: they boot the
+real host through `WebApplicationFactory`, which exercises composition, options validation at
+start-up, both hosted services, the middleware pipeline and the health endpoints. The host starting
+at all is the gate that failed on the previous run.
 
 Static verification actually executed, across the whole solution (247 files, 70 namespaces, 304
 top-level types):
@@ -1571,17 +1584,33 @@ value and provenance — and its indexes must include `ix_observations_subject` 
 both the specific and the sweep case, and the sweep case was proven against live PostgreSQL to use
 it under `IS NULL`.
 
-**Where the build is most likely to fail first**, in order of my own confidence: the owned-type
-configurations in `ObservationConfiguration` (three owned types, indexes declared inside their
-`OwnsOne` builders), then the collection expressions and `IAsyncEnumerable` iterators added in
-stage 8, then the two new controllers. Everything has been read against the compiler's rules by
-hand and none of it has been compiled.
+**Where the build was actually most likely to fail** turned out not to be any of the things I
+predicted. The first gate found three `CS0246` missing-using defects - in `NormalizationPipeline`,
+`ObservationConfiguration` and `NormalizationPipelineTests` - and none of the owned-type mapping,
+collection-expression or iterator code I had flagged as risky. The prediction is left here rather
+than corrected away: the interesting lesson is that I ranked *semantic* risk and the real failures
+were *lexical*, in the one category my static tooling was structurally unable to see. See the
+verification log entry for 2026-08-26.
+
+The owned-type configurations in `ObservationConfiguration` remain the place a *migration* is most
+likely to fail, which is a different gate and has still not run.
 
 ### Still outstanding before Phase 2 can close
 
-- **The build, test and migration gates, none of which has ever run.** This is the whole of what
-  separates "code complete" from "verified", and it is the one thing this environment cannot do —
-  see section 12 for the blocker.
+- **The test and migration gates.** The Release build now passes; the test run does not yet, and
+  the migration has never been generated. This is the whole of what separates "code complete" from
+  "verified", and it is the one thing this environment cannot do — see section 12.
+- **Eleven database tests cannot pass without a database.** Eight cover the persistence half of the
+  safety seam — the guarantee that the database refuses a domain write with no authorisation window
+  open. Three, added 2026-08-26, cover registry round-trip fidelity after an unmapped property was
+  found to be silently discarding a licensed retention cap. Together they are the most important
+  thing in Phase 2 still unproven. Supply `AIINV_TEST_POSTGRES` or start Docker. **They must not be
+  counted as passing**, which until 2026-08-26 they silently were.
+- **An unmapped property is invisible to unit tests.** `LicensingTerms.Retention` was absent from
+  the EF configuration entirely, and 635 passing tests said nothing, because they construct the
+  value object in memory where the property is always present. Two static checks now cover the
+  class of defect — owned-type mapping completeness and constructor bindability — but the real
+  guard is a round trip against a provider, and that needs a database.
 - A watchlist and a ticker-to-CIK resolver, without which nothing fetches on its own.
 - Provider slots for market data, news and macroeconomic series — one registration each, no
   architecture change.

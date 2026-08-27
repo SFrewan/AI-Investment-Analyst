@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using AI.Investment.Domain.Sources;
 using Microsoft.EntityFrameworkCore;
@@ -33,6 +34,13 @@ namespace AI.Investment.Infrastructure.Persistence.Configurations;
 /// </remarks>
 public sealed class DataSourceConfiguration : IEntityTypeConfiguration<DataSource>
 {
+    /// <summary>How "no licensed cap" is stored.</summary>
+    /// <remarks>
+    /// A word rather than a magic duration. Zero would read as "delete immediately" - the exact
+    /// opposite - and a very large interval would be a cap somebody could one day exceed.
+    /// </remarks>
+    public const string UnlimitedRetention = "unlimited";
+
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.General);
 
     public void Configure(EntityTypeBuilder<DataSource> builder)
@@ -133,6 +141,37 @@ public sealed class DataSourceConfiguration : IEntityTypeConfiguration<DataSourc
             licensing.Property(l => l.Notes)
                 .HasColumnName("licence_notes")
                 .HasMaxLength(LicensingTerms.MaxNotesLength);
+
+            // The licensed retention cap, and the reason the approved Option C retention model
+            // works at all: RetentionPolicy reads this to decide whether an archived payload must
+            // be deleted. It was previously not mapped by any means - no Property, no OwnsOne, no
+            // Ignore - so the cap never reached the database and every reload produced whatever
+            // the constructor happened to leave behind. A source licensed for 30 days would have
+            // been reloaded with no cap at all.
+            //
+            // Converted to a NOT NULL string rather than a nullable interval, deliberately.
+            // RetentionLimit is never null - Unlimited is a stated value, not an absence - but a
+            // value converter is not applied to a null column, so a nullable representation would
+            // reload Unlimited as a null RetentionLimit and put a NullReferenceException inside
+            // the one rule that deletes evidence. A non-null column keeps the converter on the
+            // path in every case.
+            //
+            // Mapping it as a scalar rather than an owned type also keeps LicensingTerms
+            // constructible: EF cannot bind a constructor parameter to an owned navigation, so an
+            // owned RetentionLimit would have broken LicensingTerms exactly as an owned Subject
+            // and Window broke IngestionRequest.
+            licensing.Property(l => l.Retention)
+                .HasColumnName("licence_retention")
+                .HasMaxLength(40)
+                .HasConversion(
+                    limit => limit.IsBounded
+                        ? limit.MaximumAge!.Value.ToString("c", CultureInfo.InvariantCulture)
+                        : UnlimitedRetention,
+                    value => value == UnlimitedRetention
+                        ? RetentionLimit.Unlimited
+                        : RetentionLimit.Of(
+                            TimeSpan.ParseExact(value, "c", CultureInfo.InvariantCulture)))
+                .IsRequired();
         });
 
         builder.Navigation(s => s.Licensing).IsRequired();

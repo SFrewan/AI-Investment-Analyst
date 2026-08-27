@@ -114,7 +114,7 @@ public sealed class SecEdgarSubmissionsNormalizer : INormalizer
         }
     }
 
-    private static IReadOnlyList<Observation> Read(JsonElement root, NormalizationInput input)
+    private static List<Observation> Read(JsonElement root, NormalizationInput input)
     {
         var provenance = Provenance.Create(
             input.SourceId,
@@ -130,7 +130,7 @@ public sealed class SecEdgarSubmissionsNormalizer : INormalizer
         {
             if (TryReadText(root, json, out var value))
             {
-                Add(observations, input, attribute, ObservationValue.Text(value), provenance, caveats);
+                Add(observations, input, attribute, value, provenance, caveats);
             }
         }
 
@@ -139,12 +139,12 @@ public sealed class SecEdgarSubmissionsNormalizer : INormalizer
         // value that is true of none of them.
         if (TryReadFirstArrayItem(root, "tickers", out var ticker))
         {
-            Add(observations, input, "company.ticker", ObservationValue.Text(ticker), provenance, caveats);
+            Add(observations, input, "company.ticker", ticker, provenance, caveats);
         }
 
         if (TryReadFirstArrayItem(root, "exchanges", out var exchange))
         {
-            Add(observations, input, "company.exchange", ObservationValue.Text(exchange), provenance, caveats);
+            Add(observations, input, "company.exchange", exchange, provenance, caveats);
         }
 
         return observations;
@@ -154,25 +154,45 @@ public sealed class SecEdgarSubmissionsNormalizer : INormalizer
     /// Adds an observation, skipping any single value the domain refuses.
     /// </summary>
     /// <remarks>
+    /// <para>
     /// One unusable field must not cost the whole document. EDGAR occasionally carries a value
     /// longer or stranger than the domain permits, and losing the other eight observations over it
     /// would be a worse outcome than the missing one.
+    /// </para>
+    /// <para>
+    /// <strong>The raw string is passed in and the value built inside the guard.</strong> This
+    /// method used to take a ready-made <see cref="ObservationValue"/>, which meant
+    /// <c>ObservationValue.Text(...)</c> ran while evaluating the argument - before this method was
+    /// entered, and therefore outside the <c>try</c>. The length rule is enforced during
+    /// construction, so the one case the guard existed for was the one case it could not catch: an
+    /// overlong field threw straight out of the normaliser instead of being skipped. Arguments are
+    /// evaluated at the call site; a guard only covers what happens after it.
+    /// </para>
+    /// <para>
+    /// The domain's 4000-character limit is untouched. What changed is where the refusal is caught.
+    /// </para>
     /// </remarks>
     private static void Add(
         List<Observation> observations,
         NormalizationInput input,
         string attribute,
-        ObservationValue value,
+        string value,
         Provenance provenance,
         IEnumerable<string> caveats)
     {
         try
         {
-            observations.Add(Observation.RecordFact(input.Subject, attribute, value, provenance, caveats));
+            observations.Add(Observation.RecordFact(
+                input.Subject,
+                attribute,
+                ObservationValue.Text(value),
+                provenance,
+                caveats));
         }
         catch (DomainValidationException)
         {
-            // Skipped, not fabricated and not substituted.
+            // Skipped, not fabricated and not substituted. The field simply produces no
+            // observation, which is a visible gap rather than a wrong value.
         }
     }
 
