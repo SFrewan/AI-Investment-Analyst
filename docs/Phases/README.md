@@ -68,6 +68,7 @@ one document knows all of them.
 | 4 | AI layer | **Verified** 2026-08-27 — Release build clean; 1017/1017 passed, 0 failed, 0 skipped | [PHASE-4-AI-LAYER.md](PHASE-4-AI-LAYER.md) |
 | 5 | Opportunity, approval, capital | **Verified** 2026-08-28 — Release build clean; 1284/1284 passed, 0 failed, 0 skipped; mutation score 96.73 % over the safety-critical domain, above the 70 % break threshold | [PHASE-5-OPPORTUNITY-APPROVAL-CAPITAL.md](PHASE-5-OPPORTUNITY-APPROVAL-CAPITAL.md) |
 | 6 | Continuous operation | **Verified** 2026-08-28 — Release build clean; 1500/1500 passed, 0 failed, 0 skipped; autonomy-escape suite green; the two-week operational invariants demonstrated deterministically over accelerated time, one assertion each, with negative twins | [PHASE-6-CONTINUOUS-OPERATION.md](PHASE-6-CONTINUOUS-OPERATION.md) |
+| 7 | Validation | **Verified** 2026-08-28 - Release build clean; 1607/1607 passed, 0 failed, 0 skipped. The measured performance report exists, was generated against a real database and has been read; its finding is **not established**, because the repository holds no data to measure. Autonomy unchanged at L3 | [PHASE-7-VALIDATION.md](PHASE-7-VALIDATION.md) |
 
 **Phases 3, 4 and 5 are Verified.** On 2026-08-27 the Release build ran clean across all ten
 projects (0 warnings, 0 errors) and the whole suite passed on the developer machine — first at
@@ -91,6 +92,8 @@ is an operational activity rather than an outstanding engineering gate, and §12
 document says exactly that.
 All three runs are recorded in [VERIFICATION-LOG.md](VERIFICATION-LOG.md), including the defects
 the gates caught and their fixes.
+
+**Phase 7 measured nothing, and says so.** The validation apparatus is complete and exercised - a point-in-time guard that refuses evidence younger than the decision it is judged against, hit rate, calibration, false positives and negatives, a benchmark fixed and fingerprinted before the run, and the shadow-versus-actual comparison over Phase 6's records. What it reports today is that no prediction survived the guard, because there are no opportunities, no price history and no shadow measurements in the repository. The report records that as **not established** rather than as a zero hit rate, and the platform's central claim remains an untested hypothesis. See [Reports/VALIDATION-REPORT.md](../Reports/VALIDATION-REPORT.md).
 
 **A live database password was committed and pushed before Phase 5, and has been removed from the
 tracked files.** `scripts/run-secret-scan.cmd` confirms by execution that no credential remains in

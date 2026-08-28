@@ -2054,3 +2054,100 @@ No test was weakened, no assertion relaxed, no threshold moved and no criterion 
 this. Every number above came from running the thing it describes.
 
 **PHASE 6 — GREEN.**
+
+
+## 2026-08-28 (later still) — PHASE 7 VERIFIED: 1607/1607, build clean, report generated and read
+
+### What was built
+
+The measuring apparatus, not the measurement. `Domain/Validation` holds the point-in-time guard, the
+evaluation window, the prediction and outcome records, the confusion matrix, the calibration curve,
+the benchmark definition, the return arithmetic, the shadow comparison and the report;
+`Application/Validation` holds the replay engine, the service that drives it and the Markdown writer;
+`Infrastructure/Validation` holds the point-in-time read side over the observation store and the
+catalogue that reads opportunities as predictions. Two read-only endpoints expose the result.
+
+### The rule the phase rests on
+
+A value is admissible at a past decision only if it became **public** at or before that decision.
+`Provenance` has carried publication time since Phase 2 and `KnowledgeCutoff` has admitted on it
+since Phase 3; this phase turns that into a guard with three answers rather than two. Admissible,
+refused, and **undeterminable** - the last for a record that cannot support a judgement either way,
+which is excluded and counted rather than assumed sound. That third answer is the whole point: look-
+ahead bias enters a system that has a point-in-time guard not through the guard but around it, on the
+rows the guard could not judge.
+
+Retrieval time is never an admission test. A domain test sweeps it across two years while holding
+publication fixed and insists the verdict never moves; an architecture test walks the IL of every
+member in the three validation namespaces and fails if any calls the `RetrievedAtUtc` getter; a
+second architecture test asserts the guard still makes its one permitted reading of it - the
+impossible-ordering check - so removing that fails rather than passing quietly.
+
+### Measurement, not optimisation
+
+No threshold, model or ranking is adjusted from any result: the validation namespaces depend on
+neither the action seam nor autonomy administration, and an architecture test says so. The four
+choices that could manufacture a favourable result - window, horizon, event threshold, benchmark -
+live in configuration under change control. The benchmark carries its declaration date and a SHA-256
+fingerprint over its own fields; a run that began before its benchmark was declared **fails** rather
+than improves.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| `dotnet build` (Release, whole solution) | Succeeded - 0 warnings, 0 errors |
+| `dotnet test` (Release, whole solution) | `build_exit=0 test_exit=0` |
+| Suite total | **1607 total, 1607 passed, 0 failed, 0 skipped** |
+| Secret scan | **0 findings** |
+
+Per assembly: Domain 890, Application 281, Safety 247, Integration 122, Architecture 46, Api 21.
+
+The targeted subjects the phase prompt asked for, one test each: point-in-time enforcement,
+lookahead prevention, bitemporal replay (in memory and against a real PostgreSQL), historical
+admissibility, hit-rate calculation, false positives, false negatives, calibration, benchmark
+calculation, shadow/actual matching, deterministic replay, and insufficient-data handling.
+
+**The mutation gate was not run and not extended, deliberately.** It covers seventeen files that
+decide whether something is allowed to happen, and Phase 7 changed none of them, so the Phase 6
+result - 73.53 % against a break threshold of 70 % - stands unaffected and re-running it would be
+repeating a completed verification. Extending it to `PointInTimeGuard`, `ConfusionMatrix`,
+`CalibrationCurve` and `PerformanceCalculator` is recorded as the recommended follow-up rather than
+quietly left undone.
+
+### Issues found and fixed
+
+1. **An owned entity shared between rows.** The integration test seeded several observations from one
+   `IngestionSubject` instance. An owned entity belongs to exactly one owner, so the change tracker
+   attributed it to the first and left the rest with nothing, arriving as a not-null violation on
+   `subject_kind` rather than as anything naming the cause. Each observation now gets its own.
+2. **A test asserting a sentence the report does not contain.** The integrity test looked for "not
+   investment advice" where the report says "is investment advice". The assertion was corrected to
+   the rendered text; the report was not reworded to match the test.
+3. **CA1000 on a generic type's factories, and two CA1859 return types.** `Measurement<T>` became a
+   non-generic `Measurement` over `decimal`, which is what every metric in this phase measures.
+4. **`BacktestEngine` had no instance state.** Made static, like every other pure decision in this
+   system - `LimitEngine`, `AdmissionControl`, `AutonomyResolver` - and dropped from the container.
+
+### The result
+
+`docs/Reports/VALIDATION-REPORT.md` was generated by the integration suite running the real service
+against a real database and committed from that run's output. It has been read.
+
+**Its finding is that nothing has been measured.** No prediction survived the point-in-time guard,
+because the repository holds no opportunities, no price history and no shadow measurements. Every
+metric reports its own absence with a reason rather than a zero, and the verdict is
+**not established** - which is deliberately a different finding from "no better than the benchmark".
+A system that has not been measured is not a system that was measured and found equal.
+
+The platform's central claim - that it produces useful analysis - therefore remains an untested
+hypothesis, exactly as §L.10 of the architecture anticipated. §P marks Phase 8 as conditional on
+Phase 7 justifying it. It does not.
+
+### Safety boundary
+
+Unchanged. Autonomy remains **L3**. No live credential, no live venue, no real-money path, and the
+validation namespaces are structurally unable to reach the action seam, the venue, the write
+authorisation window or autonomy administration.
+
+**PHASE 7 — GREEN.**

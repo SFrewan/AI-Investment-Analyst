@@ -19,12 +19,14 @@ using AI.Investment.Infrastructure.Configuration;
 using AI.Investment.Infrastructure.Ingestion;
 using AI.Investment.Infrastructure.Ingestion.Providers;
 using AI.Investment.Application.Operations;
+using AI.Investment.Application.Validation;
 using AI.Investment.Infrastructure.Normalization;
 using AI.Investment.Infrastructure.Operations;
 using AI.Investment.Infrastructure.Persistence;
 using AI.Investment.Infrastructure.Persistence.Repositories;
 using AI.Investment.Infrastructure.Policy;
 using AI.Investment.Infrastructure.Time;
+using AI.Investment.Infrastructure.Validation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -52,6 +54,7 @@ public static class DependencyInjection
         AddAi(services, configuration);
         AddOpportunities(services);
         AddOperations(services, configuration);
+        AddValidation(services, configuration);
 
         services.AddSingleton<IClock, SystemClock>();
 
@@ -356,6 +359,27 @@ public static class DependencyInjection
         OperationsMessages.ShadowDecisionRecorded,
         OperationsMessages.OutboxAbandoned,
     ];
+
+    /// <summary>
+    /// Registers the validation read side. Phase 7.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately NOT ValidateOnStart, for the same reason as the sections above: a mistyped
+    /// evaluation window should leave the platform running and the validation endpoint reporting
+    /// that it cannot run, where somebody can see it, rather than preventing the host from starting.
+    /// </remarks>
+    private static void AddValidation(IServiceCollection services, IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        services.AddOptions<ValidationOptions>()
+            .Bind(configuration.GetSection(ValidationOptions.SectionName))
+            .ValidateDataAnnotations();
+
+        services.AddSingleton<IValidationRequestFactory, ConfiguredValidationRequestFactory>();
+        services.AddScoped<IValidationHistory, EfValidationHistory>();
+        services.AddScoped<IPredictionCatalogue, EfPredictionCatalogue>();
+    }
 
     private static void AddOperations(IServiceCollection services, IConfiguration configuration)
     {

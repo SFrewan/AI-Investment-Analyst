@@ -21,5 +21,19 @@ public interface IShadowDecisionStore
         int limit,
         CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Every measurement recorded in a period, oldest first and unpaged.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately without a limit, and deliberately not reusing <see cref="GetRecentAsync"/>.
+    /// Validation compares what a higher autonomy level would have done against what happened, and a
+    /// comparison over the most recent N measurements is a comparison over a sample that selected
+    /// itself by recency. Either the whole period is measured or the period is wrong.
+    /// </remarks>
+    Task<IReadOnlyList<ShadowDecision>> GetBetweenAsync(
+        DateTime fromUtc,
+        DateTime toUtc,
+        CancellationToken cancellationToken = default);
+
     Task SaveAsync(CancellationToken cancellationToken = default);
 }

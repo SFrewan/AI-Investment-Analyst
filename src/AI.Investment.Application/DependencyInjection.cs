@@ -8,6 +8,7 @@ using AI.Investment.Application.Freshness;
 using AI.Investment.Application.Ingestion;
 using AI.Investment.Application.Normalization;
 using AI.Investment.Application.Operations;
+using AI.Investment.Application.Validation;
 using AI.Investment.Application.Retention;
 using AI.Investment.Application.Sources.ActivateSource;
 using AI.Investment.Application.Sources.RegisterKnownSources;
@@ -78,6 +79,15 @@ public static class DependencyInjection
         // Issuing, withdrawing and automatically lowering grants. Every method proposes an action
         // under AutonomyAdministration, which an AI proposer is refused structurally.
         services.AddScoped<AutonomyAdministration>();
+
+        // ---- Validation. Phase 7. ------------------------------------------------------------
+        //
+        // Measurement only, and one registration: the replay engine is a static pure function like
+        // every other decision in this system, so there is nothing to register for it.
+        //
+        // Nothing here writes. There is no path from a validation result back into a threshold, a
+        // score or a policy, which is what keeps this phase measurement rather than fitting.
+        services.AddScoped<ValidationService>();
 
         services.AddScoped<RegisterKnownSourcesHandler>();
         services.AddScoped<ActivateSourceHandler>();

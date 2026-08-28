@@ -54,6 +54,24 @@ public sealed class EfShadowDecisionStore : IShadowDecisionStore
             .ConfigureAwait(false);
     }
 
+    public async Task<IReadOnlyList<ShadowDecision>> GetBetweenAsync(
+        DateTime fromUtc,
+        DateTime toUtc,
+        CancellationToken cancellationToken = default)
+    {
+        if (toUtc < fromUtc)
+        {
+            return [];
+        }
+
+        return await _dbContext.ShadowDecisions
+            .Where(s => s.RecordedAtUtc >= fromUtc && s.RecordedAtUtc <= toUtc)
+            .OrderBy(s => s.RecordedAtUtc)
+            .ThenBy(s => s.ShadowDecisionId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+    }
+
     public Task SaveAsync(CancellationToken cancellationToken = default) =>
         _dbContext.SaveChangesAsync(cancellationToken);
 }

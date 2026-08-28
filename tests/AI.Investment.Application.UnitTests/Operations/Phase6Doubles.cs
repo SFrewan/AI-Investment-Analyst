@@ -118,6 +118,16 @@ internal sealed class InMemoryShadowStore : IShadowDecisionStore
         Task.FromResult<IReadOnlyList<ShadowDecision>>(
             _decisions.OrderByDescending(d => d.RecordedAtUtc).Take(Math.Max(limit, 0)).ToList());
 
+    public Task<IReadOnlyList<ShadowDecision>> GetBetweenAsync(
+        DateTime fromUtc,
+        DateTime toUtc,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<ShadowDecision>>(
+            _decisions
+                .Where(d => d.RecordedAtUtc >= fromUtc && d.RecordedAtUtc <= toUtc)
+                .OrderBy(d => d.RecordedAtUtc)
+                .ToList());
+
     public Task SaveAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 }
 
