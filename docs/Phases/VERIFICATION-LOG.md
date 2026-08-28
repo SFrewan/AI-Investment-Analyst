@@ -1317,14 +1317,463 @@ for these changes** - this environment has no .NET SDK.
 
 ---
 
+## 2026-08-27 — Integration-test repair closed; Phase 3 implemented, not verified
+
+### Integration-test infrastructure (Phase 2 close-out)
+
+Five defects were found and fixed, and the developer machine then reported the **first fully green
+suite this project has had**: Release build succeeded, **647 total, 647 passed, 0 failed, 0
+skipped**.
+
+1. `PostgresFixture` created its schema with `EnsureCreatedAsync`, so the tests proved nothing
+   about the migrations that by then existed. Replaced with `MigrateAsync`.
+2. The suite ran against a long-lived database with hard-coded identifiers, so the first run passed
+   and every run after it failed on `23505 duplicate key`. The fixture now truncates every mapped
+   table before each test, from a statement whose coverage is itself checked against the EF model
+   by `DatabaseResetCoverageTests`.
+3. That truncation is destructive, and the development database sits on the same server under the
+   same credentials one word away in the connection string. The fixture now refuses any database
+   whose name does not end in `_tests`, and **fails loudly rather than skipping** — a suite pointed
+   at the wrong database is a configuration error to be seen.
+4. `EfIdempotencyStore` threw `InvalidOperationException` on the second claim of a key through one
+   context: EF refuses to track a second instance with the same key, and `Add` threw before any SQL
+   was sent, so the `DbUpdateException` handler could never see it. Fixed with an identity-map
+   check; the database remains the arbiter between separate callers, and a second test now claims
+   the same key through a *different* context so that path cannot rot.
+5. `Migrate` then failed with `42P07: relation "action_executions" already exists`, because the
+   database left behind by `EnsureCreated` has every table and no `__EFMigrationsHistory`. A
+   database that exists with zero applied migrations is now dropped and rebuilt from the
+   migrations — a condition that is false forever after the first migration is recorded.
+
+One run was lost to `dotnet test --no-build` executing a stale assembly; the stack traces named
+line numbers that could not exist in the edited file, which is how it was identified.
+
+### Phase 3 — deterministic analytics
+
+Implemented per §P of the canonical roadmap: the analytics vocabulary (`MetricId`, `MetricValue`,
+`CalculationVersion`, `KnowledgeCutoff`, `CalculationContext`, `CalculationInput`, `MetricResult`,
+`CalculationOutcome`, `IMetricCalculator`), three deterministic engines, **22 financial and
+valuation metrics**, a **versioned scoring engine** with a declarative specification, and a
+**golden-file reproducibility gate**. 161 new test cases; expected suite total **808**.
+
+One defect was found by reasoning during implementation and fixed before it spread: a derived claim
+was stamped with the wall-clock time the arithmetic ran, which makes a backtest reject its own
+intermediate results as evidence from the future. `MetricResult.EvidenceAvailableAtUtc` is now the
+latest publication date among its inputs. A Stage-1 test that had encoded the earlier behaviour was
+corrected rather than left to pass.
+
+### What was actually verified, and what was not
+
+| Check | Result |
+|---|---|
+| Type resolution across the solution | **PASS** |
+| Structural/brace sanity | **PASS** |
+| Duplicate-type scan | **PASS** (generic-arity false positives only) |
+| Static member accesses resolve to declared members (826 checked) | **PASS** |
+| Every asserted number recomputed independently in decimal | **PASS** — all reproduce exactly |
+| Line endings, encoding, non-ASCII | **PASS** |
+| `dotnet build` | **NOT RUN** |
+| `dotnet test` | **NOT RUN** |
+| Migrations | Not applicable — Phase 3 changes no EF model |
+
+The arithmetic check is worth naming: a test asserting `0.475` is only as good as that number, so
+every expectation in the Phase 3 tests and in the golden file was recomputed from the specified
+formulas in decimal. All reproduce exactly, including the clamped and inverted normalisation cases
+and the four growth sign cases.
+
+### Blocker, stated precisely
+
+The assistant has no .NET SDK and cannot obtain one: the container's egress proxy refuses
+`api.nuget.org`, `packages.microsoft.com`, `builds.dotnet.microsoft.com` and the Ubuntu archives,
+so neither a toolchain nor a package restore is possible. The device bridge to the developer
+machine offers file transfer but no shell. Computer-use is available on that machine but switched
+off, so the assistant cannot drive a terminal there either.
+
+`scripts/verify.ps1` was written to close this with one action rather than a transcription loop: it
+runs the Release build and the full suite against `ai_investment_tests` and writes
+`artifacts/verify/summary.txt` — exit codes, per-project results, totals and every failure — plus
+the full logs and a `DONE.txt` marker, all of which the assistant reads back directly.
+
+**Phase 3 is IMPLEMENTED — NOT VERIFIED.** No GREEN is claimed.
+
+---
+
 ## Outstanding gates
 
 | Gate | Phase | Owner | Notes |
 |---|---|---|---|
-| `dotnet build` | 0, 1, 2 | developer machine | **PASSED** in Release, 2026-08-26 |
-| `dotnet test` | 1, 2 | developer machine | **PASSED** 2026-08-26 — 640 total, 632 passed, 0 failed, 8 skipped |
-| `dotnet ef migrations add` + `database update` | 2 | developer machine | **PENDING RE-RUN** — first attempt failed on two EF model defects, both fixed |
+| `dotnet build` | 0, 1, 2 | developer machine | **PASSED** in Release, 2026-08-27 |
+| `dotnet test` | 1, 2 | developer machine | **PASSED** 2026-08-27 — 647 total, 647 passed, 0 failed, 0 skipped |
+| `dotnet ef migrations add` + `database update` | 2 | developer machine | **PASSED** — `InitialCreate` and `DataPlane` applied |
+| Integration tests | 1, 2 | developer machine | **PASSED** — no longer skipped; real PostgreSQL via `AIINV_TEST_POSTGRES` |
+| `dotnet build` | 3 | **not run** | Analytics has never been compiled |
+| `dotnet test` | 3 | **not run** | 161 new cases written; expected total 808 |
+| Golden-file reproducibility gate | 3 | **not run** | Arithmetic independently reproduced; the test itself has not executed |
 | Runtime startup | 0, 1 | developer machine | Options validation runs at startup |
-| Integration tests | 1, 2 | developer machine | **11** tests **SKIPPED** — no PostgreSQL/Docker. Not counted as passing |
-| Data-plane tests | 2 | written, not run | 407 cases covering stages 1-10 |
 | CI workflow execution | 0 | GitHub | Present, never triggered |
+
+---
+
+## 2026-08-27 (later) — Phase 3 documentation committed; analyzer-risk audit; execution still blocked
+
+Documentation obligations closed. `docs/Phases/PHASE-3-DETERMINISTIC-ANALYTICS.md` and this log were
+written to the repository, and the four scoring test files that had been left LF-terminated were
+normalised to CRLF and re-committed, which retires known limitation 6 of the phase document.
+
+**Analyzer-risk audit.** Because `TreatWarningsAsErrors` is on and the analyzer wave is pinned at
+`8.0-Recommended`, an analyzer diagnostic fails the build exactly as a compiler error would. Every
+new file was scanned for the patterns that trigger the live rules, and each hit was compared against
+already-compiling code in the same projects rather than judged in isolation. Three patterns appear
+only in the new code and all three resolve benignly:
+
+| Pattern | Rule it could trip | Why it does not |
+|---|---|---|
+| `trimmed.StartsWith('v')` | CA1310 | `char` overload; the rule targets the culture-sensitive `string` overloads |
+| `group.Count()`, `.Distinct(...).Count()` | CA1829 | Receivers are `IGrouping`/`IEnumerable`; neither exposes a `Count` property |
+| `list.Any(x => x is null)` | CA1860 | The rule targets parameterless `Any()` on a countable collection |
+
+Also checked and clear: no constant array is passed as an argument (CA1861); the new surface
+declares no struct, `IComparable`, operator overload, `IEnumerable` implementation, exposed `List<>`
+or array property; every new enum declares a zero member; every `Assert.Equal(n, ....Count)` uses n
+of at least 2, outside xUnit2013's range; and every public method in the new test classes carries
+`[Fact]` or `[Theory]` (xUnit1013).
+
+**Catalogue coherence.** `FinancialCalculators.All` lists 22 entries, matching the catalogue test,
+and is declared after all 22 calculator properties — static initialisers run in declaration order,
+so the reverse would populate the list with nulls. The golden bundle's keys match the
+`FinancialFigures` constants the calculators read, and its arithmetic closes: free cash flow
+150 − 50 = 100, net margin 0.1, current ratio 2.0, debt-to-equity 1.0, free-cash-flow margin 0.1,
+normalised 0.4/0.5/0.5/0.5, mean 0.475.
+
+**Execution routes, re-probed today.**
+
+| Route | Result |
+|---|---|
+| .NET SDK in the container | Absent |
+| Microsoft/NuGet/Ubuntu egress | Refused (unchanged) |
+| npm registry | **403 Forbidden** — now blocked as well |
+| PyPI | Reachable, carries no .NET toolchain |
+| Device bridge shell (`device_bash`) | Not offered on this Windows device |
+| Proxied local MCP servers | None present |
+| Computer-use on the developer machine | Available but **switched off**; access requested 2026-08-27, not granted |
+
+No route to a compiler exists from this environment. Phase 3 therefore remains **IMPLEMENTED — NOT
+VERIFIED**, and is not reported as GREEN. The single action that closes it is enabling computer use
+on the developer machine, after which `scripts/verify.ps1` runs the Release build and the full suite
+and writes `artifacts/verify/summary.txt` for the assistant to read back and act on.
+
+---
+
+## 2026-08-27 (evening) — PHASE 3 VERIFIED: 808/808, build clean
+
+Computer use was enabled on the developer machine, and the Phase 3 gates were run there for the
+first time. Terminals and the Windows shell are granted click-only under computer use — no typing,
+no key presses — so `scripts/run-verify.cmd` was added as a double-clickable launcher for
+`verify.ps1`, started from File Explorer, and its results read back out of `artifacts/verify`
+through the file bridge. No console output was transcribed by hand at any point.
+
+### Run 1 — build failed, one real error
+
+```
+ScoringEngine.cs(150,33): error CA1859: Change return type of method 'Caveats' from
+'IEnumerable<string>' to 'List<string>' for improved performance
+```
+
+`Caveats` is private, builds a `List<string>`, and returned it behind an interface; every caller is
+inside the type, so the indirection buys nothing and CA1859 is right. Return type changed to
+`List<string>`. No behaviour changed, no test changed, no suppression added.
+
+Worth recording honestly: the pre-build analyzer audit written earlier the same day did **not**
+predict this. That audit checked rules whose trigger is a visible syntactic pattern — a string
+comparison, an array literal, a `Count()` receiver. CA1859's trigger is a dataflow fact about what a
+method actually returns, which no textual scan can see. Static auditing narrowed the risk; it did
+not replace the compiler, and the log should say so.
+
+### Run 2 — green
+
+| Gate | Result |
+|---|---|
+| `dotnet build` (Release, whole solution) | Succeeded — 10 projects, **0 warnings, 0 errors** |
+| `dotnet test` (Release, whole solution) | `build_exit=0 test_exit=0` |
+| **Suite total** | **808 total, 808 passed, 0 failed, 0 skipped** |
+
+| Assembly | Total | Passed | Failed | Skipped |
+|---|---:|---:|---:|---:|
+| AI.Investment.Domain.UnitTests | 497 | 497 | 0 | 0 |
+| AI.Investment.Application.UnitTests | 135 | 135 | 0 | 0 |
+| AI.Investment.Integration.Tests | 87 | 87 | 0 | 0 |
+| AI.Investment.Safety.Tests | 54 | 54 | 0 | 0 |
+| AI.Investment.Api.Tests | 21 | 21 | 0 | 0 |
+| AI.Investment.Architecture.Tests | 14 | 14 | 0 | 0 |
+| **Total** | **808** | **808** | **0** | **0** |
+
+808 is exactly the number predicted before anything had been compiled — 647 baseline plus 161 new
+cases — which means no test was silently lost, renamed away or skipped between writing and running.
+
+### Run 3 — reproducibility, and a reporting defect fixed
+
+`verify.ps1` matched only `test succeeded` for its per-project section, the shape the newer
+Microsoft.Testing.Platform runner prints. This SDK's VSTest runner prints
+`Passed!  - Failed: 0, Passed: 497, ...`, so run 2's summary carried an **empty** totals section
+despite a fully green suite — a false negative that reads exactly like a run that never happened.
+The script now matches both shapes and computes an aggregate line. Run 3 re-ran the whole pipeline
+with the fixed script and reproduced run 2 exactly:
+
+```
+build_exit=0
+test_exit=0
+aggregate over 6 assemblies: total=808 passed=808 failed=0 skipped=0
+```
+
+### Database and migrations
+
+No migration was created and none was required: Phase 3 changes no EF model. The migration path was
+still exercised — the 87 integration tests run `MigrateAsync` against the dedicated
+`ai_investment_tests` database, and the fixture's refusal to accept any database whose name does not
+end in `_tests` remained in force throughout. The development database was never touched.
+
+### Architecture
+
+The 14 NetArchTest rules pass with the Analytics surface present. Analytics lives entirely in
+`AI.Investment.Domain`, depends on nothing outward, and cannot reach the Action/Policy seam.
+
+**PHASE 3 — GREEN.** Verified by execution, not by inspection.
+
+---
+
+## 2026-08-27 (late) — PHASE 4 VERIFIED: 1017/1017, build clean
+
+Canonical Phase 4 — the AI layer — implemented, built and verified on the developer machine.
+
+### Scope, reconciled from the repository first
+
+The instruction arrived headed "Phase 4 — Financial Analytics Engine", which pairs a canonical
+number with a title the finer programme list gives to canonical **Phase 3** — already Verified. §P
+of the architecture report defines Phase 4 as the **AI layer**: `IChatClient` abstraction, agent
+contract, three agents (Financial, News, Risk), groundedness validator, synthesis agent, prompt
+versioning, full audit records, evaluation harness. That reading was confirmed with the user before
+any code was written, and is what was built.
+
+### What was built
+
+The AI vocabulary and the groundedness check in the domain; the chat port, agent contract, run loop,
+budget, four agents, orchestrator and evaluation harness in the application layer; a file prompt
+store and a refusing chat model in infrastructure; four versioned prompts following the convention
+`prompts/README.md` set in Phase 0. **208 new test cases.**
+
+### Run 1 — build failed, three compile errors
+
+| Error | Cause |
+|---|---|
+| CS1620 in `FilePromptStore` | `string.Create(provider, $"…" + "…")` — an interpolated string concatenated with a plain literal is a `string`, which cannot bind to the interpolated-handler overload |
+| CS1503 in `AnalysisBudgetTests` | `Select(_ => … TryBeginCall(out _))` — the lambda's `_` parameter was in scope, so `out _` bound to an `int` rather than declaring a discard |
+| CS1503 in `AiLayerSafetyTests` | `ToClaim()` returns `Claim<FinancialReading>`; a calculator input takes `Claim<decimal>` |
+
+The third was the interesting one. The test was trying to say two things at once — that an agent
+records itself as an interpretation, and that a calculator refuses an interpretation — and could
+only compile if the same object did both. It was restated as the two assertions it was actually
+making, which is stronger, not weaker: neither half can now drift without a test going red.
+
+### Run 2 — build clean, six test failures
+
+All six were incorrect expectations in the new tests, not defects:
+
+- Four expected `ModelRef.ToString()` to render `provider/model/version`. It renders
+  `provider/model@version`, consistent with how `PromptRef` renders a version. The tests were wrong.
+- One expected an unstable case to be reported as "repeats disagreed" when the case had *also*
+  failed its expectation, so the report named the observed statuses instead — which is the more
+  useful message.
+- One expected `SchemaFailed` from a run whose single permitted call was spent on the first attempt.
+  `BudgetExceeded` is correct: the budget is why the run stopped, and an operator reading "schema
+  failed" would go looking at the model instead of the ceiling. That failure became an additional
+  test making the precedence explicit rather than an expectation quietly loosened.
+
+No test was weakened, skipped or deleted to reach green.
+
+### Run 3 — green, and reproduced
+
+```
+build_exit=0
+test_exit=0
+aggregate over 6 assemblies: total=1017 passed=1017 failed=0 skipped=0
+```
+
+| Assembly | Total | Passed | Failed | Skipped |
+|---|---:|---:|---:|---:|
+| AI.Investment.Domain.UnitTests | 595 | 595 | 0 | 0 |
+| AI.Investment.Application.UnitTests | 213 | 213 | 0 | 0 |
+| AI.Investment.Integration.Tests | 101 | 101 | 0 | 0 |
+| AI.Investment.Safety.Tests | 65 | 65 | 0 | 0 |
+| AI.Investment.Architecture.Tests | 22 | 22 | 0 | 0 |
+| AI.Investment.Api.Tests | 21 | 21 | 0 | 0 |
+| **Total** | **1017** | **1017** | **0** | **0** |
+
+A fourth run reproduced run 3 exactly.
+
+### Database and migrations
+
+No migration was created and none was required: Phase 4 changes no EF model. Agent runs are recorded
+in the existing `audit_records` table, and the four new `AuditEventType` members are stored as text
+in a column already sized for them. Phase 1's claim that the audit record could take agent, model
+and prompt identity without a schema rewrite is now tested rather than asserted, and it held. The
+migration path was still exercised: the 101 integration tests run `MigrateAsync` against the
+dedicated `ai_investment_tests` database, and the development database was never touched.
+
+### Safety and architecture
+
+The 22 architecture rules and 65 safety tests pass. Two are worth naming:
+
+- **The AI-SDK ban was left in force, not relaxed.** The rule forbidding `Microsoft.Extensions.AI`,
+  `OpenAI`, `Azure.AI`, `Anthropic` and `Microsoft.SemanticKernel` in any assembly still passes,
+  because Phase 4 adds no package at all. The chat port is owned by this codebase; the adapter that
+  calls a paid provider belongs to the phase that decides to spend money. Relaxing a rule that says
+  "no AI SDK has crept in" would have been the easy reading of "agents are Phase 4" and the wrong one.
+- **No type in either AI namespace references the Action or Policy seam.** Asserted by reflection
+  over the built assemblies, so it fails on the reference rather than on the eventual call.
+
+**PHASE 4 — GREEN.** Verified by execution, not by inspection.
+
+
+## 2026-08-28 — PHASE 5 VERIFIED: 1284/1284, build clean, mutation score 96.73 %
+
+Canonical Phase 5 — opportunity, approval, capital — finished, built, tested, mutation-tested and
+secret-scanned on the developer machine.
+
+### What was built
+
+The opportunity lifecycle and its refusals; the equity opportunity type with its own economics
+calculator and evidence requirement; the limit engine's remaining kinds; the approval token and its
+fingerprint; the double-entry capital ledger; the simulated execution path and the executor's five
+gates; two read-only API controllers; one migration adding four tables. **267 new test cases**,
+taking the suite from 1017 to 1284.
+
+### The gates found eight defects, six of them in code written before this phase
+
+1. `CapitalLedger.IsBalanced` summed every account with the same sign, so a disposal at a gain
+   "balanced" at twice the gain. Fixed to the accounting identity.
+2. The concentration limit measured a position against total exposure, so the first position in a
+   flat book is 100 % of it and the limit could never be satisfied. Fixed to a share of equity, with
+   a fail-closed branch for a book holding no equity.
+3. The six well-known ledger accounts were cached singletons. They are mapped as owned entities, so
+   one instance with two owners made the provider write one side as null — a not-null violation on
+   `credit_account` when a purchase and its fee were appended together. Fixed by returning a fresh
+   instance per access; record value equality is unaffected.
+4. Approval issuance wrote outside an authorisation window, which the persistence guard refuses. The
+   approval path could not have worked against a real database. Fixed by routing issue and revoke
+   through the action gateway under `ApprovalAdministration`.
+5. The executor's opportunity transition was never persisted: the repository stages, nothing saved,
+   and the gateway's window had already closed. Fixed by reopening one with the decision that
+   authorised the execution.
+6. `PostgresFixture.TruncateStatement` did not name the four new tables, so rows would have leaked
+   between integration tests.
+7. A comment in `Infrastructure/DependencyInjection` claimed an architecture test asserted that every
+   registered venue is simulated. No such test existed. It does now, and the comment names it.
+8. The scaffolded migration failed the build on CA1861. The generated file was corrected rather than
+   the rule exempted; the column lists are unchanged.
+
+Numbers 1, 2, 4 and 5 were found by writing the tests, not by running them — three of the four are
+defects that would have produced a wrong answer quietly rather than a failure loudly.
+
+### Security: a committed database password
+
+Found during the phase-5 delta inspection: `appsettings.json`,
+`appsettings.Development.json` and `scripts/verify.ps1` each carried a PostgreSQL connection string
+containing a real password, all three tracked, on a branch that had been pushed.
+
+Removed from all three. The two settings files now carry an empty connection string, which fails
+`ValidateOnStart` rather than starting on a guess; `verify.ps1` reads `AIINV_TEST_POSTGRES` from the
+environment or from a git-ignored `scripts/verify.local.ps1`, with a tracked example file that shows
+the shape and holds no value. `.gitignore` was extended.
+
+The remediation was then **verified by execution rather than asserted**. `scripts/secret-scan.ps1`
+scans every tracked file for credential-shaped patterns, reports file and line and never the matched
+text, and searches history for commits touching a credential line:
+
+```
+[secret-scan] tracked files: 355
+[secret-scan] findings in the working tree: 0
+[secret-scan] history commit touching a credential line: 8d0c8d0 phase3 still
+[secret-scan] history commit touching a credential line: a94b12c first changes
+```
+
+One match needed a decision rather than a fix: a fabricated `apikey=SECRET` in
+`IngestionGatewayTests.cs`, inside the test proving a provider's exception message is never copied
+into the ingestion ledger. The literal is the thing under test, so it was added to the scanner's
+named allow-list with that reason recorded next to it.
+
+**The value is still in git history and on the remote, and must be rotated.** History was not
+rewritten: rewriting a pushed branch is the owner's decision, not an assistant's. `docs/SECURITY.md`
+§9 carries the full record and the remaining exposure.
+
+### Build and test
+
+```
+build_exit=0
+test_exit=0
+aggregate over 6 assemblies: total=1284 passed=1284 failed=0 skipped=0
+```
+
+| Assembly | Total | Passed | Failed | Skipped |
+|---|---:|---:|---:|---:|
+| AI.Investment.Domain.UnitTests | 700 | 700 | 0 | 0 |
+| AI.Investment.Application.UnitTests | 229 | 229 | 0 | 0 |
+| AI.Investment.Safety.Tests | 194 | 194 | 0 | 0 |
+| AI.Investment.Integration.Tests | 107 | 107 | 0 | 0 |
+| AI.Investment.Architecture.Tests | 33 | 33 | 0 | 0 |
+| AI.Investment.Api.Tests | 21 | 21 | 0 | 0 |
+| **Total** | **1284** | **1284** | **0** | **0** |
+
+Release, 0 warnings, 0 errors, `TreatWarningsAsErrors` on. Zero skipped: a real PostgreSQL was
+reachable, `MigrateAsync` applied all three migrations to the dedicated `ai_investment_tests`
+database, and every integration test executed — including the concurrent-consume race, which proves
+one of two simultaneous consumers wins an approval token and the other is refused.
+
+### The mutation gate, which failed first
+
+Stryker.NET over the eight files that decide whether something is allowed to happen —
+`PolicyEngine`, `RiskTierCalculator`, `LimitEngine`, `LimitSet`, `ApprovalToken`,
+`ActionFingerprint`, `CapitalLedger`, `LedgerEntry` — driven by the safety and domain suites, break
+threshold 70 %.
+
+| Run | Killed | Survived | No coverage | Score | Outcome |
+|---|---:|---:|---:|---:|---|
+| First | 176 | 78 | 21 | 64.00 % | **failed the gate** |
+| After 67 additional tests | 266 | 7 | 2 | **96.73 %** | passed |
+
+The threshold was not lowered, no assertion was weakened and no test was deleted.
+
+**What the survivors actually said.** Most of the seventy-eight were one hole, repeated: *every
+refusal message in the safety-critical domain could be replaced with an empty string and the whole
+suite stayed green.* The tests asserted which outcome came back and never why. For components whose
+entire product is a defensible "no" that is a real gap — a decision with a blank reason denies
+exactly as correctly and tells the person reading the audit trail nothing about whether the control
+fired or the system broke. Sixty-seven tests now pin the reasons, the ordered list of policies each
+decision says it evaluated, the argument guards nothing had ever passed `null` to, the exact length
+boundaries nothing sat on, every one of the seven refusals an approval token can give, and the credit
+side of the ledger's sign convention — which no test had exercised, because every existing entry
+debited an asset.
+
+**The nine that remain were analysed, not suppressed.** Two are equivalent by contract
+(`PolicyEngine`'s redundant null check, whose two operands always agree; the `>=` in `Max`, which
+differs from `>` only when the operands are equal). Two are equivalent at the boundary: `s.Length <=
+Max ? s : s[..Max]` gives the same string either way when the length is exactly `Max`, and both
+boundaries are covered. Two are the argument guards in `CapitalLedger.Balances` and
+`LimitSet.Create`, where the following `ToList()` throws LINQ's own `ArgumentNullException` — the
+explicit guards stay because they name the right parameter and do not depend on the next line
+remaining a LINQ call. One is a dead branch in `RiskTierCalculator` whose guarded value equals the
+fall-through, kept as the documented seam for the currency-aware exposure bands that are deferred.
+One is the `_ =>` arm of `ApprovalRefusal`'s description, unreachable because every value the check
+can return has its own arm, and kept so that adding a member produces a sentence rather than an
+exception. The full table is in the phase document, §12.1. A mutation score is only evidence if the
+mutants it did not kill have been looked at.
+
+### Safety boundary
+
+Unchanged and re-asserted: the only execution venue in the solution reports itself simulated, no
+assembly references a broker or exchange SDK, `Capability.FinancialExecution` is still refused
+unconditionally and structurally by the policy engine, and `Capability.SimulatedExecution` is a
+separate capability at its own tier. The executor passes through policy, limits, the approval token,
+the kill switch and the audit record, and fails closed at each. No live credential, no live venue,
+no real-money path was introduced.
+
+**PHASE 5 — GREEN.** Verified by execution, not by inspection.

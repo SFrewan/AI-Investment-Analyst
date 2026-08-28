@@ -90,11 +90,15 @@ public sealed class PostgresFixture : IAsyncLifetime
         """
         TRUNCATE TABLE
             "public"."action_executions",
+            "public"."approval_tokens",
             "public"."audit_records",
             "public"."companies",
             "public"."data_sources",
             "public"."ingestion_runs",
+            "public"."kill_switch",
+            "public"."ledger_entries",
             "public"."observations",
+            "public"."opportunities",
             "public"."processed_actions",
             "public"."quarantined_payloads",
             "public"."unreplayable_evidence"

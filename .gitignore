@@ -399,3 +399,13 @@ credentials.json
 /artifacts/
 /TestResults/
 *.received.*
+
+## ---------------------------------------------------------------------------
+## Phase 5: machine-local verification settings.
+##
+## scripts/verify.local.ps1 sets the test database connection string, which
+## contains a password. It is never committed. scripts/verify.local.example.ps1
+## is the tracked template and contains no credential.
+## ---------------------------------------------------------------------------
+scripts/verify.local.ps1
+scripts/*.local.ps1

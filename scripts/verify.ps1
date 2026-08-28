@@ -37,9 +37,31 @@ Remove-Item -Path $doneMarker -ErrorAction SilentlyContinue
 Remove-Item -Path $summaryLog -ErrorAction SilentlyContinue
 Remove-Item -Path $testLog    -ErrorAction SilentlyContinue
 
-# The integration fixture refuses any database whose name does not end in '_tests', so this
-# cannot be pointed at the development database by accident.
-$env:AIINV_TEST_POSTGRES = 'Host=127.0.0.1;Port=5432;Database=ai_investment_tests;Username=postgres;Password=000160'
+# ---- test database credential ------------------------------------------------------------
+# NO CREDENTIAL IS STORED IN THIS FILE. It used to hold a live PostgreSQL password, in a tracked
+# file, on a repository with a remote - which is exactly the failure docs/SECURITY.md exists to
+# prevent, and rotating the password would not have removed it from history.
+#
+# Resolution order:
+#   1. AIINV_TEST_POSTGRES already set in the environment (CI supplies it as a secret).
+#   2. scripts/verify.local.ps1 - git-ignored, machine-local, created from
+#      scripts/verify.local.example.ps1. It sets $env:AIINV_TEST_POSTGRES.
+#
+# With neither, the integration tests SKIP and say so. They are not silently counted as passed:
+# the fixture reports the reason and the summary shows the skip count.
+#
+# The fixture additionally refuses any database whose name does not end in '_tests', so a
+# mistyped value cannot be pointed at the development database.
+$localSettings = Join-Path $PSScriptRoot 'verify.local.ps1'
+
+if ([string]::IsNullOrWhiteSpace($env:AIINV_TEST_POSTGRES) -and (Test-Path -Path $localSettings)) {
+    . $localSettings
+}
+
+if ([string]::IsNullOrWhiteSpace($env:AIINV_TEST_POSTGRES)) {
+    Write-Host "[verify] AIINV_TEST_POSTGRES is not set and scripts\verify.local.ps1 is absent."
+    Write-Host "[verify] Integration tests that need a database will SKIP. See scripts\verify.local.example.ps1."
+}
 
 $started = Get-Date
 
@@ -97,7 +119,12 @@ foreach ($line in (Get-Matches -Path $buildLog -Pattern ': (error|warning) [A-Za
 
 $summary.Add('')
 $summary.Add('--- per project ---')
-foreach ($line in (Get-Matches -Path $testLog -Pattern 'test (succeeded|failed)' -First 40)) {
+# Two shapes are matched deliberately. VSTest prints one 'Passed!/Failed! - Failed: n, Passed: n,
+# ...' line per assembly; the newer Microsoft.Testing.Platform runner prints 'X test succeeded'.
+# An earlier version of this script matched only the second, so a fully green run reported no
+# totals at all - which reads exactly like a run that never happened.
+$perProject = Get-Matches -Path $testLog -Pattern '^\s*(Passed!|Failed!|.*test (succeeded|failed))' -First 40
+foreach ($line in $perProject) {
     $summary.Add($line)
 }
 
@@ -105,6 +132,29 @@ $summary.Add('')
 $summary.Add('--- totals ---')
 foreach ($line in (Get-Matches -Path $testLog -Pattern '^\s*Test summary:' -First 5)) {
     $summary.Add($line)
+}
+
+# Aggregate across assemblies, so the whole-suite number does not have to be added up by hand.
+$failed = 0; $passed = 0; $skipped = 0; $total = 0; $counted = 0
+foreach ($line in $perProject) {
+    $m = [regex]::Match(
+        $line,
+        'Failed:\s*(\d+),\s*Passed:\s*(\d+),\s*Skipped:\s*(\d+),\s*Total:\s*(\d+)')
+
+    if ($m.Success) {
+        $failed  += [int]$m.Groups[1].Value
+        $passed  += [int]$m.Groups[2].Value
+        $skipped += [int]$m.Groups[3].Value
+        $total   += [int]$m.Groups[4].Value
+        $counted += 1
+    }
+}
+
+if ($counted -gt 0) {
+    $summary.Add("aggregate over $counted assemblies: total=$total passed=$passed failed=$failed skipped=$skipped")
+}
+else {
+    $summary.Add('aggregate: no per-assembly result lines were recognised in the test log')
 }
 
 $summary.Add('')

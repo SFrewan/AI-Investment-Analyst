@@ -1,4 +1,5 @@
 using AI.Investment.Application.Actions;
+using AI.Investment.Application.Capital;
 using AI.Investment.Application.Companies.CreateCompany;
 using AI.Investment.Application.Companies.GetCompany;
 using AI.Investment.Application.Companies.SearchCompanies;
@@ -48,6 +49,10 @@ public static class DependencyInjection
         // Read-only, and deliberately outside the seam: asking how current the data is has no
         // side effect, and auditing reads would bury the record of what actually changed.
         services.AddScoped<IFreshnessReport, FreshnessReport>();
+
+        // The capital read model. Read only: there is no write path on ILedgerReport, and a balance
+        // is a projection of immutable entries rather than a field anything can set.
+        services.AddScoped<ILedgerReport, LedgerReport>();
 
         // The second half of ingesting: what the archived bytes mean. Scoped, and constructable
         // with no normalisers registered at all - an installation with none quarantines every

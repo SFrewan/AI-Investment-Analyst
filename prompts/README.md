@@ -1,11 +1,20 @@
 # Prompts
 
-**This directory is empty of prompts, and that is correct for the current phase.**
+**Four prompts live here, added in Phase 4** — one per agent:
 
-No AI agent exists yet. Agents arrive in Phase 4, on top of a data plane (Phase 2) and
-deterministic analytics (Phase 3) that must be trustworthy first. This directory and its
-conventions exist now so that the first prompt has somewhere correct to land — and because a
-prompt written before the convention exists is a prompt that will not be versioned.
+| Agent | Prompt |
+|---|---|
+| `FinancialAnalysisAgent` | `financial-analyst/statement-interpretation.v1.0.md` |
+| `NewsAnalysisAgent` | `news-analyst/coverage-interpretation.v1.0.md` |
+| `RiskAnalysisAgent` | `risk-analyst/risk-identification.v1.0.md` |
+| `SynthesisAgent` | `synthesist/analysis-synthesis.v1.0.md` |
+
+The conventions below were written in Phase 0, before any prompt existed, so that the first one had
+somewhere correct to land. Phase 4 adopted them **as written** rather than rewriting them around the
+first implementation that arrived: `PromptRef` carries an agent, a name and a two-part version, and
+`FilePromptStore` resolves exactly the path this file specifies. An integration test checks every
+agent against the file it declares, because prompts and prompt references are edited by different
+changes and nothing else connects them.
 
 ---
 

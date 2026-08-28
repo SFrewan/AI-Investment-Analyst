@@ -1,7 +1,10 @@
+using System.Globalization;
 using AI.Investment.Domain.Actions;
+using AI.Investment.Domain.Ai;
 using AI.Investment.Domain.Common;
 using AI.Investment.Domain.Enums;
 using AI.Investment.Domain.Exceptions;
+using AI.Investment.Domain.Ingestion;
 using AI.Investment.Domain.ValueObjects;
 
 namespace AI.Investment.Domain.Auditing;
@@ -223,6 +226,99 @@ public sealed class AuditRecord
             decision.Outcome,
             proposal.RiskTier);
     }
+
+    /// <summary>
+    /// Records what an agent produced, or refused to produce.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An agent run is not an action and never becomes one: nothing here touches a proposal, a
+    /// decision or an execution, and the three identifier columns stay null. What is recorded is
+    /// everything needed to reproduce the run and to notice when it stops being reproducible - the
+    /// model and its pinned version, the prompt and its version, the fingerprint of the evidence
+    /// the agent was shown, and what the run cost.
+    /// </para>
+    /// <para>
+    /// The evidence hash is the field that makes the rest worth storing. Without it, two analyses
+    /// of the same company a month apart differ for reasons nobody can separate; with it, "the
+    /// evidence changed" and "the answer changed" are distinguishable in the data.
+    /// </para>
+    /// </remarks>
+    public static AuditRecord ForAgentRun(
+        CorrelationId correlationId,
+        IngestionSubject subject,
+        string evidenceHash,
+        AgentResult result,
+        DateTime nowUtc)
+    {
+        ArgumentNullException.ThrowIfNull(correlationId);
+        ArgumentNullException.ThrowIfNull(subject);
+        ArgumentNullException.ThrowIfNull(result);
+        DateRange.EnsureUtc(nowUtc, nameof(nowUtc));
+
+        if (string.IsNullOrWhiteSpace(evidenceHash))
+        {
+            throw new DomainValidationException(
+                nameof(evidenceHash),
+                "An agent run must record the fingerprint of the evidence it was shown, or the run " +
+                "cannot be reproduced and its output cannot be compared with any other.");
+        }
+
+        var diagnostics = result.Diagnostics;
+
+        var details = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["analysis.subject"] = subject.ToString(),
+            ["analysis.evidenceHash"] = evidenceHash.Trim(),
+            ["agent.id"] = result.AgentId.Value,
+            ["agent.version"] = result.AgentVersion,
+            ["agent.status"] = result.Status.ToString(),
+            ["model"] = diagnostics.Model.ToString(),
+            ["prompt"] = diagnostics.Prompt.ToString(),
+            ["run.tokensIn"] = Number(diagnostics.TokensIn),
+            ["run.tokensOut"] = Number(diagnostics.TokensOut),
+            ["run.costUsd"] = diagnostics.CostUsd.ToString("0.######", CultureInfo.InvariantCulture),
+            ["run.latencyMs"] = Number(diagnostics.LatencyMs),
+            ["run.attempts"] = Number(diagnostics.Attempts),
+            ["run.evidenceCount"] = Number(result.Evidence.Count),
+        };
+
+        if (result.Confidence is not null)
+        {
+            details["agent.confidence"] = result.Confidence.ToString();
+        }
+
+        if (result.Limitations.Count > 0)
+        {
+            details["agent.limitations"] = string.Join(" | ", result.Limitations);
+        }
+
+        if (result.Explanation is not null)
+        {
+            details["agent.explanation"] = result.Explanation;
+        }
+
+        return new AuditRecord(
+            Guid.NewGuid(),
+            correlationId,
+            nowUtc,
+            result.Succeeded ? AuditEventType.AgentOutputAccepted : AuditEventType.AgentOutputRejected,
+            result.AgentId.Value,
+            ProposerKind.AiAgent,
+            Trim(result.Succeeded
+                ? $"{result.AgentId} analysed {subject} at {result.Confidence}."
+                : $"{result.AgentId} produced nothing for {subject}: {result.Status} - {result.Explanation}"),
+            details,
+            proposalId: null,
+            decisionId: null,
+            executionId: null,
+            capability: null,
+            actionType: null,
+            outcome: null,
+            riskTier: null);
+    }
+
+    private static string Number(int value) => value.ToString(CultureInfo.InvariantCulture);
 
     private static Dictionary<string, string> BaseDetails(ActionProposal proposal)
     {

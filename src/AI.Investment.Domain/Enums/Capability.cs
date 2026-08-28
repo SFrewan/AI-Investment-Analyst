@@ -52,4 +52,23 @@ public enum Capability
     /// </para>
     /// </remarks>
     DataRetention = 8,
+
+    /// <summary>
+    /// Placing orders at a simulated venue, where nothing real moves.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Its own capability, deliberately separate from <see cref="FinancialExecution"/>. Simulated
+    /// execution commits no real money and must be possible for the platform to be testable at all;
+    /// real execution is refused unconditionally until the execution plane exists. Folding the two
+    /// together would force a choice between never exercising the path and enabling the one thing
+    /// that must stay off.
+    /// </para>
+    /// <para>
+    /// It is still a full capability rather than an exemption: proposals using it are policy
+    /// evaluated, limit checked, approval gated and audited exactly like any other. The whole value
+    /// of simulating on the production path is lost the moment the simulation gets a shortcut.
+    /// </para>
+    /// </remarks>
+    SimulatedExecution = 9,
 }

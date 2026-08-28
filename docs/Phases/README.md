@@ -64,20 +64,42 @@ one document knows all of them.
 | 0 | Foundation, governance and configuration | Implemented — verification pending | [PHASE-0-FOUNDATION.md](PHASE-0-FOUNDATION.md) |
 | 1 | Domain core, epistemic model and the Action/Policy safety seam | Implemented — verification pending | [PHASE-1-DOMAIN-CORE-AND-SAFETY-SEAM.md](PHASE-1-DOMAIN-CORE-AND-SAFETY-SEAM.md) |
 | 2 | Global data and intelligence foundation | Build and tests green (647/647 on 2026-08-27 after the integration-test repair); **not Verified** — see section 12 | [PHASE-2-GLOBAL-DATA-AND-INTELLIGENCE-FOUNDATION.md](PHASE-2-GLOBAL-DATA-AND-INTELLIGENCE-FOUNDATION.md) |
-| 3 | Deterministic analytics | Implemented — **not verified**; never compiled | [PHASE-3-DETERMINISTIC-ANALYTICS.md](PHASE-3-DETERMINISTIC-ANALYTICS.md) |
+| 3 | Deterministic analytics | **Verified** 2026-08-27 — Release build clean; 808/808 passed, 0 failed, 0 skipped | [PHASE-3-DETERMINISTIC-ANALYTICS.md](PHASE-3-DETERMINISTIC-ANALYTICS.md) |
+| 4 | AI layer | **Verified** 2026-08-27 — Release build clean; 1017/1017 passed, 0 failed, 0 skipped | [PHASE-4-AI-LAYER.md](PHASE-4-AI-LAYER.md) |
+| 5 | Opportunity, approval, capital | **Verified** 2026-08-28 — Release build clean; 1284/1284 passed, 0 failed, 0 skipped; mutation score 96.73 % over the safety-critical domain, above the 70 % break threshold | [PHASE-5-OPPORTUNITY-APPROVAL-CAPITAL.md](PHASE-5-OPPORTUNITY-APPROVAL-CAPITAL.md) |
 
-**No phase is currently Verified.** Phase 2 reached a green build and a fully green suite on the
-developer machine (647 passed, 0 failed, 0 skipped) after the integration-test infrastructure was
-repaired; it is still short of Verified because its own section 12 lists gates that have not run.
+**Phases 3, 4 and 5 are Verified.** On 2026-08-27 the Release build ran clean across all ten
+projects (0 warnings, 0 errors) and the whole suite passed on the developer machine — first at
+**808** with Phase 3, then at **1017 total, 1017 passed, 0 failed, 0 skipped** with Phase 4's AI
+layer added. On 2026-08-28 Phase 5 took it to **1284 total, 1284 passed, 0 failed, 0 skipped**,
+with **zero skipped** because a real PostgreSQL was reachable and every integration test executed.
+Phase 5 also carries a mutation-testing gate over the eight files that decide whether something is
+allowed to happen: **96.73 %**, against a break threshold of 70 %.
+All three runs are recorded in [VERIFICATION-LOG.md](VERIFICATION-LOG.md), including the defects
+the gates caught and their fixes.
 
-Phase 3 has **never been compiled**. Everything in it was written, statically checked and
-reviewed, but no build or test has executed against it. The reason is environmental and is
-recorded in the verification log: the assistant working on this repository has no .NET SDK, and
-the container's egress proxy blocks `api.nuget.org`, `packages.microsoft.com`,
-`builds.dotnet.microsoft.com` and the Ubuntu archives, so no toolchain can be installed and no
-package can be restored. `scripts/verify.ps1` exists so that a single run on the developer
-machine produces machine-readable results the assistant can read back and act on without anyone
-transcribing console output.
+**A live database password was committed and pushed before Phase 5, and has been removed from the
+tracked files.** `scripts/run-secret-scan.cmd` confirms by execution that no credential remains in
+any of the 355 tracked files. It is still in git history, reachable from commits `a94b12c` and
+`8d0c8d0`, and **must be rotated**; the full record and the remaining exposure are in
+[../SECURITY.md](../SECURITY.md) §9.
+
+Phases 0, 1 and 2 remain short of Verified, and the reason is unchanged: their own section 12
+documents list gates — runtime startup, CI execution — that have not run. Phase 2's code is green
+inside that same 808 and has been since the integration-test repair; what it lacks is the
+non-test evidence its document asks for, not passing tests.
+
+`scripts/verify.ps1` runs the Release build and the full suite against the dedicated
+`ai_investment_tests` database and writes machine-readable results to `artifacts/verify`;
+`scripts/run-verify.cmd` starts it with a double-click, which is what lets the assistant run the
+gates itself under computer use rather than asking anyone to transcribe console output.
+`scripts/run-mutation.cmd` runs the mutation-testing gate over the safety-critical domain, and
+`scripts/run-secret-scan.cmd` checks every tracked file for credential-shaped patterns.
+
+**The test database connection string is no longer in `verify.ps1`.** It comes from
+`AIINV_TEST_POSTGRES`, or from the git-ignored `scripts/verify.local.ps1` — copy
+`scripts/verify.local.example.ps1` to create it. Without either, the integration tests skip and
+say so rather than being counted as passed.
 
 ## Related documents
 

@@ -147,7 +147,7 @@ public sealed class ScoringEngine : IMetricCalculator<IReadOnlyCollection<Metric
             .Where(metric => !present.Contains(metric));
     }
 
-    private IEnumerable<string> Caveats(
+    private List<string> Caveats(
         List<(ScoreComponent Component, MetricResult Result)> matched,
         decimal coverage,
         DateTime asOfUtc)

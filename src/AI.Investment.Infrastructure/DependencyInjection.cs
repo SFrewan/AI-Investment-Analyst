@@ -1,8 +1,20 @@
 using AI.Investment.Application.Abstractions;
+using AI.Investment.Application.Ai;
+using AI.Investment.Application.Ai.Abstractions;
+using AI.Investment.Application.Ai.Agents;
+using AI.Investment.Application.Ai.Pipeline;
+using AI.Investment.Application.Approvals;
+using AI.Investment.Application.Execution;
 using AI.Investment.Application.Ingestion;
+using AI.Investment.Application.Opportunities;
 using AI.Investment.Application.Normalization;
+using AI.Investment.Domain.Ai;
+using AI.Investment.Domain.Opportunities;
+using AI.Investment.Domain.Opportunities.Equity;
 using AI.Investment.Infrastructure.Actions;
+using AI.Investment.Infrastructure.Ai;
 using AI.Investment.Infrastructure.Auditing;
+using AI.Investment.Infrastructure.Execution;
 using AI.Investment.Infrastructure.Configuration;
 using AI.Investment.Infrastructure.Ingestion;
 using AI.Investment.Infrastructure.Ingestion.Providers;
@@ -35,6 +47,8 @@ public static class DependencyInjection
         AddPersistence(services, configuration);
         AddSafety(services);
         AddIngestion(services, configuration);
+        AddAi(services, configuration);
+        AddOpportunities(services);
 
         services.AddSingleton<IClock, SystemClock>();
 
@@ -71,6 +85,90 @@ public static class DependencyInjection
         services.AddOptions<RawArchiveOptions>()
             .Bind(configuration.GetSection(RawArchiveOptions.SectionName))
             .ValidateDataAnnotations();
+
+        services.AddOptions<PromptStoreOptions>()
+            .Bind(configuration.GetSection(PromptStoreOptions.SectionName))
+            .ValidateDataAnnotations();
+
+        // Same reasoning as SafetyOptions: a misconfigured ceiling should leave the platform running
+        // and refusing, where an operator can see it, rather than preventing the host from starting.
+        // ConfiguredLimitProvider returns a set that refuses everything when it cannot read this.
+        services.AddOptions<LimitOptions>()
+            .Bind(configuration.GetSection(LimitOptions.SectionName));
+
+        services.AddOptions<SimulatedVenueOptions>()
+            .Bind(configuration.GetSection(SimulatedVenueOptions.SectionName))
+            .ValidateDataAnnotations();
+    }
+
+    /// <summary>
+    /// Registers the opportunity, approval, capital and execution machinery.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="SimulatedVenue"/> is the only <c>IExecutionVenue</c> registered, and registering a
+    /// real one is a separate, formal decision gated behind the validation phase - not a
+    /// configuration switch. <c>ExecutionRuleTests</c> asserts by reflection that every type in the
+    /// solution implementing <c>IExecutionVenue</c> reports itself simulated, so adding a live one
+    /// cannot happen quietly.
+    /// </para>
+    /// <para>
+    /// The kill switch is registered scoped because it reads the database. Its environment half
+    /// needs no state at all, which is what lets it answer when the database cannot.
+    /// </para>
+    /// </remarks>
+    private static void AddOpportunities(IServiceCollection services)
+    {
+        services.AddScoped<IOpportunityRepository, EfOpportunityRepository>();
+        services.AddScoped<IApprovalTokenStore, EfApprovalTokenStore>();
+        services.AddScoped<ILedgerStore, EfLedgerStore>();
+        services.AddScoped<IExposureProvider, LedgerExposureProvider>();
+        services.AddScoped<IKillSwitch, DatabaseAndEnvironmentKillSwitch>();
+        services.AddSingleton<ILimitProvider, ConfiguredLimitProvider>();
+
+        services.AddScoped<IExecutionVenue, SimulatedVenue>();
+
+        // The first concrete opportunity type. A type is two registrations - what it must prove
+        // before it may leave Draft, and how its economics are calculated - and nothing else. The
+        // lifecycle, approvals, limits, ledger and audit trail are untouched by adding a second.
+        services.AddSingleton<IEvidenceRequirement, EquityEvidenceRequirement>();
+        services.AddSingleton<IOpportunityEconomicsCalculator, EquityEconomicsCalculator>();
+
+        services.AddScoped<OpportunityWorkflow>();
+        services.AddScoped<ApprovalWorkflow>();
+        services.AddScoped<OpportunityExecutor>();
+    }
+
+    /// <summary>
+    /// Registers the AI layer, with a provider that refuses.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="UnconfiguredChatModel"/> is the registered <c>IChatModel</c> and, in this phase,
+    /// the only one. Phase 4 delivers the port, the agents, the validators and the evaluation
+    /// harness; the adapter that calls a paid provider belongs to the phase that decides to spend
+    /// money, because spending money is an action this platform gates rather than assumes.
+    /// </para>
+    /// <para>
+    /// Registering a refusing model rather than nothing at all is deliberate. An unregistered
+    /// dependency fails when something resolves it, which is a stack trace at an arbitrary moment;
+    /// a refusing one produces an audited <c>ProviderError</c> at the point of use, which is a
+    /// record an operator can read.
+    /// </para>
+    /// </remarks>
+    private static void AddAi(IServiceCollection services, IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        services.AddSingleton<IPromptStore, FilePromptStore>();
+        services.AddSingleton<IChatModel, UnconfiguredChatModel>();
+
+        services.AddScoped<IAnalysisAgent<EvidenceBundle, FinancialReading>, FinancialAnalysisAgent>();
+        services.AddScoped<IAnalysisAgent<EvidenceBundle, NewsReading>, NewsAnalysisAgent>();
+        services.AddScoped<IAnalysisAgent<EvidenceBundle, RiskAssessment>, RiskAnalysisAgent>();
+        services.AddScoped<IAnalysisAgent<SynthesisInput, AnalysisSynthesis>, SynthesisAgent>();
+
+        services.AddScoped<AnalysisPipeline>();
     }
 
     private static void AddPersistence(IServiceCollection services, IConfiguration configuration)

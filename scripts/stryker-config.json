@@ -1,0 +1,23 @@
+{
+  "stryker-config": {
+    "project": "AI.Investment.Domain.csproj",
+    "solution": "AI-Investment-Analyst.sln",
+    "test-projects": [
+      "tests/AI.Investment.Safety.Tests/AI.Investment.Safety.Tests.csproj",
+      "tests/AI.Investment.Domain.UnitTests/AI.Investment.Domain.UnitTests.csproj"
+    ],
+    "mutate": [
+      "**/Actions/PolicyEngine.cs",
+      "**/Actions/RiskTierCalculator.cs",
+      "**/Limits/LimitEngine.cs",
+      "**/Limits/LimitSet.cs",
+      "**/Approvals/ApprovalToken.cs",
+      "**/Approvals/ActionFingerprint.cs",
+      "**/Capital/CapitalLedger.cs",
+      "**/Capital/LedgerEntry.cs"
+    ],
+    "reporters": [ "json", "cleartext", "progress" ],
+    "thresholds": { "high": 90, "low": 80, "break": 70 },
+    "concurrency": 2
+  }
+}

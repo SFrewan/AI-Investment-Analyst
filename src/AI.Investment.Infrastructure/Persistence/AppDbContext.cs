@@ -1,10 +1,13 @@
 using AI.Investment.Application.Abstractions;
 using AI.Investment.Domain.Actions;
+using AI.Investment.Domain.Approvals;
 using AI.Investment.Domain.Auditing;
+using AI.Investment.Domain.Capital;
 using AI.Investment.Domain.Companies;
 using AI.Investment.Domain.Ingestion;
 using AI.Investment.Domain.Normalization;
 using AI.Investment.Domain.Observations;
+using AI.Investment.Domain.Opportunities;
 using AI.Investment.Domain.Retention;
 using AI.Investment.Domain.Sources;
 using Microsoft.EntityFrameworkCore;
@@ -71,6 +74,18 @@ public sealed class AppDbContext : DbContext
 
     /// <summary>Payloads that were archived but could not be turned into observations.</summary>
     public DbSet<QuarantinedPayload> QuarantinedPayloads => Set<QuarantinedPayload>();
+
+    /// <summary>Opportunities, from discovery through to a recorded outcome. Phase 5.</summary>
+    public DbSet<Opportunity> Opportunities => Set<Opportunity>();
+
+    /// <summary>Human approvals of exact actions. Single-use, and consumed conditionally. Phase 5.</summary>
+    public DbSet<ApprovalToken> ApprovalTokens => Set<ApprovalToken>();
+
+    /// <summary>The double-entry capital ledger. Append-only; balances are projections. Phase 5.</summary>
+    public DbSet<LedgerEntry> LedgerEntries => Set<LedgerEntry>();
+
+    /// <summary>The durable half of the kill switch. Phase 5.</summary>
+    public DbSet<KillSwitchFlag> KillSwitchFlags => Set<KillSwitchFlag>();
 
     /// <summary>
     /// Commits domain changes. Throws <see cref="UnauthorizedWriteException"/> unless the

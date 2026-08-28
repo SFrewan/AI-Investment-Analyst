@@ -92,6 +92,61 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                     b.ToTable("action_executions", (string)null);
                 });
 
+            modelBuilder.Entity("AI.Investment.Domain.Approvals.ApprovalToken", b =>
+                {
+                    b.Property<Guid>("ApprovalTokenId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ApprovedBy")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("approved_by");
+
+                    b.Property<DateTime?>("ConsumedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("consumed_at_utc");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at_utc");
+
+                    b.Property<string>("Fingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("action_fingerprint");
+
+                    b.Property<DateTime>("IssuedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("issued_at_utc");
+
+                    b.Property<Guid>("OpportunityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("opportunity_id");
+
+                    b.Property<Guid>("ProposalId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("proposal_id");
+
+                    b.Property<string>("RevocationReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("revocation_reason");
+
+                    b.Property<DateTime?>("RevokedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("revoked_at_utc");
+
+                    b.HasKey("ApprovalTokenId");
+
+                    b.HasIndex("OpportunityId", "ConsumedAtUtc")
+                        .HasDatabaseName("ix_approval_tokens_opportunity");
+
+                    b.ToTable("approval_tokens", (string)null);
+                });
+
             modelBuilder.Entity("AI.Investment.Domain.Auditing.AuditRecord", b =>
                 {
                     b.Property<Guid>("AuditRecordId")
@@ -181,6 +236,41 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_audit_records_proposal_id");
 
                     b.ToTable("audit_records", (string)null);
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Capital.LedgerEntry", b =>
+                {
+                    b.Property<Guid>("LedgerEntryId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("description");
+
+                    b.Property<Guid?>("ExecutionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("execution_id");
+
+                    b.Property<DateTime>("OccurredAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at_utc");
+
+                    b.Property<Guid?>("OpportunityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("opportunity_id");
+
+                    b.HasKey("LedgerEntryId");
+
+                    b.HasIndex("OccurredAtUtc")
+                        .HasDatabaseName("ix_ledger_entries_occurred_at_utc");
+
+                    b.HasIndex("OpportunityId")
+                        .HasDatabaseName("ix_ledger_entries_opportunity");
+
+                    b.ToTable("ledger_entries", (string)null);
                 });
 
             modelBuilder.Entity("AI.Investment.Domain.Companies.Company", b =>
@@ -386,6 +476,88 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                     b.ToTable("observations", (string)null);
                 });
 
+            modelBuilder.Entity("AI.Investment.Domain.Opportunities.Opportunity", b =>
+                {
+                    b.Property<Guid>("OpportunityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid?>("ApprovalTokenId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("approval_token_id");
+
+                    b.Property<decimal?>("Confidence")
+                        .HasPrecision(5, 4)
+                        .HasColumnType("numeric(5,4)")
+                        .HasColumnName("confidence");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)")
+                        .HasColumnName("description");
+
+                    b.Property<string>("Economics")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("economics");
+
+                    b.Property<Guid?>("ExecutionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("execution_id");
+
+                    b.Property<string>("Resolution")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("resolution");
+
+                    b.Property<string>("Risk")
+                        .HasColumnType("jsonb")
+                        .HasColumnName("risk");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTime>("StatusChangedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("status_changed_at_utc");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("title");
+
+                    b.Property<string>("Type")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("type");
+
+                    b.Property<string>("_evidence")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("evidence");
+
+                    b.Property<string>("_proposalIds")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("proposal_ids");
+
+                    b.HasKey("OpportunityId");
+
+                    b.HasIndex("Status", "StatusChangedAtUtc")
+                        .HasDatabaseName("ix_opportunities_status");
+
+                    b.ToTable("opportunities", (string)null);
+                });
+
             modelBuilder.Entity("AI.Investment.Domain.Retention.UnreplayableEvidence", b =>
                 {
                     b.Property<string>("Id")
@@ -496,6 +668,40 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                     b.ToTable("data_sources", (string)null);
                 });
 
+            modelBuilder.Entity("AI.Investment.Infrastructure.Persistence.KillSwitchFlag", b =>
+                {
+                    b.Property<Guid>("KillSwitchFlagId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Capability")
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("capability");
+
+                    b.Property<bool>("Engaged")
+                        .HasColumnType("boolean")
+                        .HasColumnName("engaged");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("reason");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.HasKey("KillSwitchFlagId");
+
+                    b.HasIndex("Capability")
+                        .IsUnique()
+                        .HasDatabaseName("ux_kill_switch_capability");
+
+                    b.ToTable("kill_switch", (string)null);
+                });
+
             modelBuilder.Entity("AI.Investment.Infrastructure.Persistence.ProcessedAction", b =>
                 {
                     b.Property<string>("IdempotencyKey")
@@ -517,6 +723,122 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_processed_actions_claimed_at_utc");
 
                     b.ToTable("processed_actions", (string)null);
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Approvals.ApprovalToken", b =>
+                {
+                    b.OwnsOne("AI.Investment.Domain.ValueObjects.Money", "MaxAmount", b1 =>
+                        {
+                            b1.Property<Guid>("ApprovalTokenId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 4)
+                                .HasColumnType("numeric(18,4)")
+                                .HasColumnName("max_amount");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("max_amount_currency");
+
+                            b1.HasKey("ApprovalTokenId");
+
+                            b1.ToTable("approval_tokens");
+
+                            b1.WithOwner()
+                                .HasForeignKey("ApprovalTokenId");
+                        });
+
+                    b.Navigation("MaxAmount")
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Capital.LedgerEntry", b =>
+                {
+                    b.OwnsOne("AI.Investment.Domain.ValueObjects.Money", "Amount", b1 =>
+                        {
+                            b1.Property<Guid>("LedgerEntryId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 4)
+                                .HasColumnType("numeric(18,4)")
+                                .HasColumnName("amount");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("currency");
+
+                            b1.HasKey("LedgerEntryId");
+
+                            b1.ToTable("ledger_entries");
+
+                            b1.WithOwner()
+                                .HasForeignKey("LedgerEntryId");
+                        });
+
+                    b.OwnsOne("AI.Investment.Domain.Capital.LedgerAccount", "Credit", b1 =>
+                        {
+                            b1.Property<Guid>("LedgerEntryId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<string>("Kind")
+                                .IsRequired()
+                                .HasMaxLength(20)
+                                .HasColumnType("character varying(20)")
+                                .HasColumnName("credit_account_kind");
+
+                            b1.Property<string>("Name")
+                                .IsRequired()
+                                .HasMaxLength(60)
+                                .HasColumnType("character varying(60)")
+                                .HasColumnName("credit_account");
+
+                            b1.HasKey("LedgerEntryId");
+
+                            b1.ToTable("ledger_entries");
+
+                            b1.WithOwner()
+                                .HasForeignKey("LedgerEntryId");
+                        });
+
+                    b.OwnsOne("AI.Investment.Domain.Capital.LedgerAccount", "Debit", b1 =>
+                        {
+                            b1.Property<Guid>("LedgerEntryId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<string>("Kind")
+                                .IsRequired()
+                                .HasMaxLength(20)
+                                .HasColumnType("character varying(20)")
+                                .HasColumnName("debit_account_kind");
+
+                            b1.Property<string>("Name")
+                                .IsRequired()
+                                .HasMaxLength(60)
+                                .HasColumnType("character varying(60)")
+                                .HasColumnName("debit_account");
+
+                            b1.HasKey("LedgerEntryId");
+
+                            b1.ToTable("ledger_entries");
+
+                            b1.WithOwner()
+                                .HasForeignKey("LedgerEntryId");
+                        });
+
+                    b.Navigation("Amount")
+                        .IsRequired();
+
+                    b.Navigation("Credit")
+                        .IsRequired();
+
+                    b.Navigation("Debit")
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("AI.Investment.Domain.Ingestion.IngestionRun", b =>
@@ -721,6 +1043,128 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Value")
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Opportunities.Opportunity", b =>
+                {
+                    b.OwnsOne("AI.Investment.Domain.Ingestion.IngestionSubject", "Subject", b1 =>
+                        {
+                            b1.Property<Guid>("OpportunityId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<string>("Identifier")
+                                .HasMaxLength(200)
+                                .HasColumnType("character varying(200)")
+                                .HasColumnName("subject_identifier");
+
+                            b1.Property<string>("Kind")
+                                .IsRequired()
+                                .HasMaxLength(60)
+                                .HasColumnType("character varying(60)")
+                                .HasColumnName("subject_kind");
+
+                            b1.HasKey("OpportunityId");
+
+                            b1.HasIndex("Kind", "Identifier")
+                                .HasDatabaseName("ix_opportunities_subject");
+
+                            b1.ToTable("opportunities");
+
+                            b1.WithOwner()
+                                .HasForeignKey("OpportunityId");
+                        });
+
+                    b.OwnsOne("AI.Investment.Domain.Opportunities.OpportunityDetail", "Detail", b1 =>
+                        {
+                            b1.Property<Guid>("OpportunityId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<string>("Json")
+                                .IsRequired()
+                                .HasColumnType("jsonb")
+                                .HasColumnName("detail");
+
+                            b1.Property<string>("Type")
+                                .IsRequired()
+                                .HasMaxLength(60)
+                                .HasColumnType("character varying(60)")
+                                .HasColumnName("detail_type");
+
+                            b1.HasKey("OpportunityId");
+
+                            b1.ToTable("opportunities");
+
+                            b1.WithOwner()
+                                .HasForeignKey("OpportunityId");
+                        });
+
+                    b.OwnsOne("AI.Investment.Domain.Opportunities.OpportunityScore", "Score", b1 =>
+                        {
+                            b1.Property<Guid>("OpportunityId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<DateTime>("AsOfUtc")
+                                .HasColumnType("timestamp with time zone")
+                                .HasColumnName("score_as_of_utc");
+
+                            b1.Property<string>("Metric")
+                                .IsRequired()
+                                .HasMaxLength(120)
+                                .HasColumnType("character varying(120)")
+                                .HasColumnName("score_metric");
+
+                            b1.Property<decimal>("Value")
+                                .HasPrecision(18, 6)
+                                .HasColumnType("numeric(18,6)")
+                                .HasColumnName("score_value");
+
+                            b1.Property<string>("Version")
+                                .IsRequired()
+                                .HasMaxLength(20)
+                                .HasColumnType("character varying(20)")
+                                .HasColumnName("score_version");
+
+                            b1.HasKey("OpportunityId");
+
+                            b1.ToTable("opportunities");
+
+                            b1.WithOwner()
+                                .HasForeignKey("OpportunityId");
+                        });
+
+                    b.OwnsOne("AI.Investment.Domain.Opportunities.OpportunitySource", "Source", b1 =>
+                        {
+                            b1.Property<Guid>("OpportunityId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<DateTime>("DiscoveredAtUtc")
+                                .HasColumnType("timestamp with time zone")
+                                .HasColumnName("discovered_at_utc");
+
+                            b1.Property<string>("DiscovererId")
+                                .IsRequired()
+                                .HasMaxLength(64)
+                                .HasColumnType("character varying(64)")
+                                .HasColumnName("discoverer_id");
+
+                            b1.HasKey("OpportunityId");
+
+                            b1.ToTable("opportunities");
+
+                            b1.WithOwner()
+                                .HasForeignKey("OpportunityId");
+                        });
+
+                    b.Navigation("Detail")
+                        .IsRequired();
+
+                    b.Navigation("Score");
+
+                    b.Navigation("Source")
+                        .IsRequired();
+
+                    b.Navigation("Subject")
                         .IsRequired();
                 });
 

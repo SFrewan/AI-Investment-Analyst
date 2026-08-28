@@ -79,6 +79,12 @@ public static class RiskTierCalculator
         Capability.OpportunityManagement => RiskTier.Medium,
         Capability.ReferenceDataManagement => RiskTier.Low,
 
+        // Simulated execution moves nothing real, but it runs the whole execution path and it is
+        // the capability that would be swapped for a live venue. Medium so that it is never the
+        // routine, unremarked case, and so the tier of a simulated action is comparable with the
+        // real one it stands in for.
+        Capability.SimulatedExecution => RiskTier.Medium,
+
         // Fail closed. An unrecognised capability - one added without updating this method -
         // is treated as maximally dangerous rather than defaulting to Low.
         _ => RiskTier.Critical,
