@@ -22,7 +22,7 @@ REM
 REM  Everything it writes lands in artifacts\verify, which .gitignore excludes.
 REM ---------------------------------------------------------------------------
 setlocal
-set MIGRATION_NAME=Phase6ContinuousOperation
+set MIGRATION_NAME=Phase8BoundedAutonomy
 cd /d "%~dp0.."
 if not exist "artifacts\verify" mkdir "artifacts\verify"
 > "artifacts\verify\migration.log" echo [migration] %MIGRATION_NAME% started %DATE% %TIME% in "%CD%"

@@ -23,13 +23,15 @@ public sealed record AutonomyGrantParameters(
     RiskTier MaxRiskTier,
     Money MaxExposure,
     string LimitSetName,
-    TimeSpan ValidFor) : IActionParameters
+    TimeSpan ValidFor,
+    Guid? PromotionWarrantId = null) : IActionParameters
 {
     public string Describe() =>
         string.Create(
             CultureInfo.InvariantCulture,
             $"grant {Capability}/{ActionType ?? "*"} @{EnvironmentName} = {Mode}, " +
-            $"tier<={MaxRiskTier}, exposure<={MaxExposure}, limits='{LimitSetName}', for {ValidFor}");
+            $"tier<={MaxRiskTier}, exposure<={MaxExposure}, limits='{LimitSetName}', for {ValidFor}, " +
+            $"warrant={PromotionWarrantId?.ToString("d", CultureInfo.InvariantCulture) ?? "none"}");
 }
 
 /// <summary>The parameters of withdrawing or lowering a grant.</summary>
@@ -58,11 +60,21 @@ public sealed record AutonomyChangeParameters(Guid AutonomyGrantId, string Chang
 /// <see cref="GrantAsync"/> names a person, because raising what the platform may do without anybody
 /// watching is exactly the decision that must have somebody's name on it.
 /// </para>
+/// <para>
+/// <strong>This is the only production path that writes a grant, and Phase 8 puts the promotion gate
+/// on it.</strong> A request for a mode above <see cref="AutonomyGrant.HighestAttendedMode"/> is
+/// refused unless it names a <see cref="PromotionWarrant"/> that is active and covers every dimension
+/// of the grant. The warrant itself can only be built from measured evidence that justified it, so an
+/// unmet Phase 7 promotion condition cannot arrive here as an L4 grant - and an architecture test
+/// asserts that no other production type calls the grant factory at all, so this door is the only
+/// one.
+/// </para>
 /// </remarks>
 public sealed class AutonomyAdministration
 {
     private readonly IActionGateway _gateway;
     private readonly IAutonomyGrantStore _grants;
+    private readonly IPromotionWarrantStore _warrants;
     private readonly IUnitOfWork _unitOfWork;
     private readonly IAuditSink _audit;
     private readonly ICorrelationContext _correlation;
@@ -71,6 +83,7 @@ public sealed class AutonomyAdministration
     public AutonomyAdministration(
         IActionGateway gateway,
         IAutonomyGrantStore grants,
+        IPromotionWarrantStore warrants,
         IUnitOfWork unitOfWork,
         IAuditSink audit,
         ICorrelationContext correlation,
@@ -78,6 +91,7 @@ public sealed class AutonomyAdministration
     {
         _gateway = gateway ?? throw new ArgumentNullException(nameof(gateway));
         _grants = grants ?? throw new ArgumentNullException(nameof(grants));
+        _warrants = warrants ?? throw new ArgumentNullException(nameof(warrants));
         _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
         _audit = audit ?? throw new ArgumentNullException(nameof(audit));
         _correlation = correlation ?? throw new ArgumentNullException(nameof(correlation));
@@ -94,6 +108,51 @@ public sealed class AutonomyAdministration
         ArgumentException.ThrowIfNullOrWhiteSpace(grantedBy);
 
         var now = _clock.UtcNow;
+
+        // The promotion gate, and it is checked before a proposal is even built. A grant above the
+        // attended ceiling is a grant to act while nobody is watching; the only thing that permits
+        // one is a warrant, and the only thing that produces a warrant is measured evidence that
+        // justified it. Refusing here rather than inside the dispatch means the refusal is recorded
+        // as a denial with a reason rather than as an exception somebody has to interpret.
+        PromotionWarrant? warrant = null;
+
+        if (parameters.Mode > AutonomyGrant.HighestAttendedMode)
+        {
+            if (parameters.PromotionWarrantId is null)
+            {
+                return Outcome(
+                    ActionOutcomeStatus.Denied,
+                    $"a grant of {parameters.Mode} permits acting while nobody is watching, and " +
+                    "requires a promotion warrant. None was named.",
+                    null);
+            }
+
+            warrant = await _warrants
+                .FindAsync(parameters.PromotionWarrantId.Value, cancellationToken)
+                .ConfigureAwait(false);
+
+            if (warrant is null)
+            {
+                return Outcome(
+                    ActionOutcomeStatus.Denied,
+                    $"no promotion warrant {parameters.PromotionWarrantId:d} exists.",
+                    null);
+            }
+
+            var refusal = warrant.WhyItDoesNotCover(
+                parameters.Capability,
+                parameters.ActionType,
+                parameters.EnvironmentName,
+                parameters.Mode,
+                parameters.MaxRiskTier,
+                parameters.MaxExposure,
+                now);
+
+            if (refusal is not null)
+            {
+                return Outcome(ActionOutcomeStatus.Denied, refusal, null);
+            }
+        }
 
         var proposal = ActionProposal.Create(
             _correlation.Current,
@@ -112,17 +171,29 @@ public sealed class AutonomyAdministration
             proposal,
             async ct =>
             {
-                issued = AutonomyGrant.Issue(
-                    parameters.Capability,
-                    parameters.ActionType,
-                    parameters.EnvironmentName,
-                    parameters.Mode,
-                    parameters.MaxRiskTier,
-                    parameters.MaxExposure,
-                    parameters.LimitSetName,
-                    grantedBy,
-                    now,
-                    parameters.ValidFor);
+                issued = warrant is null
+                    ? AutonomyGrant.Issue(
+                        parameters.Capability,
+                        parameters.ActionType,
+                        parameters.EnvironmentName,
+                        parameters.Mode,
+                        parameters.MaxRiskTier,
+                        parameters.MaxExposure,
+                        parameters.LimitSetName,
+                        grantedBy,
+                        now,
+                        parameters.ValidFor)
+                    : AutonomyGrant.IssueBounded(
+                        warrant,
+                        parameters.ActionType,
+                        parameters.EnvironmentName,
+                        parameters.Mode,
+                        parameters.MaxRiskTier,
+                        parameters.MaxExposure,
+                        parameters.LimitSetName,
+                        grantedBy,
+                        now,
+                        parameters.ValidFor);
 
                 await _grants.AddAsync(issued, ct).ConfigureAwait(false);
                 await _unitOfWork.SaveChangesAsync(ct).ConfigureAwait(false);

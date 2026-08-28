@@ -398,6 +398,11 @@ public static class DependencyInjection
         services.AddScoped<IEscalationStore, EfEscalationStore>();
         services.AddScoped<IShadowDecisionStore, EfShadowDecisionStore>();
 
+        // Phase 8. Both tables are expected to be empty: no warrant can be issued while the measured
+        // evidence does not justify one, and no live venue can be authorised without a warrant.
+        services.AddScoped<IPromotionWarrantStore, EfPromotionWarrantStore>();
+        services.AddScoped<ILiveVenueAuthorizationStore, EfLiveVenueAuthorizationStore>();
+
         services.AddScoped<IOutbox, EfOutbox>();
         services.AddScoped<IOutboxDispatcher, OutboxDispatcher>();
 

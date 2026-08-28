@@ -255,6 +255,8 @@ internal sealed class InMemoryAutonomyGrantStore : IAutonomyGrantStore
 {
     private readonly List<AutonomyGrant> _grants = [];
 
+    public IReadOnlyList<AutonomyGrant> All => _grants;
+
     public void Seed(AutonomyGrant grant) => _grants.Add(grant);
 
     public Task<IReadOnlyList<AutonomyGrant>> GetActiveAsync(

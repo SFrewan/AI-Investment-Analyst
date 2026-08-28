@@ -87,6 +87,12 @@ public sealed class AutonomyGrantConfiguration : IEntityTypeConfiguration<Autono
 
         builder.Property(g => g.DemotionCount).HasColumnName("demotion_count").IsRequired();
 
+        // Nullable, and deliberately not a foreign key. A warrant may be revoked or expire while the
+        // grant it permitted is still on the books, and the grant must still say which warrant it
+        // came from - that is precisely what the circuit breaker asks when it decides whether the
+        // evidence behind a running grant still holds.
+        builder.Property(g => g.PromotionWarrantId).HasColumnName("promotion_warrant_id");
+
         builder.Ignore(g => g.IsRevoked);
         builder.Ignore(g => g.EffectiveMode);
 

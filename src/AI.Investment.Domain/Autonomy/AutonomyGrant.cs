@@ -29,6 +29,22 @@ namespace AI.Investment.Domain.Autonomy;
 /// new grant from a human, which is a row an operator can see and a decision somebody signed. A
 /// circuit breaker that can also close itself is not a circuit breaker.
 /// </para>
+/// <para>
+/// <strong>Unattended execution needs a warrant.</strong> Phase 8 adds
+/// <see cref="IssueBounded"/>, which takes a <see cref="PromotionWarrant"/> and refuses any grant
+/// the warrant does not cover on every dimension. A warrant can only be built from measured evidence
+/// that justified it, so an unmet promotion condition cannot become unattended execution: there is
+/// no argument list that produces a bounded grant without a warrant object.
+/// </para>
+/// <para>
+/// <see cref="Issue"/> is left able to write any mode, because Phase 6's simulated unattended
+/// operation is written in terms of it and rewriting a verified phase to add a gate it predates
+/// would be the wrong kind of change. The gate is on the production path instead:
+/// <c>AutonomyAdministration.GrantAsync</c> refuses a mode above
+/// <see cref="HighestAttendedMode"/> without a covering warrant, and an architecture test asserts
+/// that no other production type calls <see cref="Issue"/> at all - so the one door is the one that
+/// is guarded.
+/// </para>
 /// </remarks>
 public sealed class AutonomyGrant
 {
@@ -133,6 +149,17 @@ public sealed class AutonomyGrant
 
     public int DemotionCount { get; private set; }
 
+    /// <summary>
+    /// The promotion warrant that permitted this grant, when it named a mode above
+    /// <see cref="AutonomyMode.PrepareForApproval"/>. Null for every attended grant.
+    /// </summary>
+    /// <remarks>
+    /// Kept on the grant rather than inferred, so that the automatic demotion path can ask whether
+    /// the evidence behind a running grant is still good without having to guess which warrant it
+    /// came from.
+    /// </remarks>
+    public Guid? PromotionWarrantId { get; private set; }
+
     public bool IsRevoked => RevokedAtUtc is not null;
 
     public bool HasExpired(DateTime nowUtc) => nowUtc >= ExpiresAtUtc;
@@ -143,10 +170,26 @@ public sealed class AutonomyGrant
     /// <summary>True when this grant can contribute anything at all to a resolution.</summary>
     public bool IsActive(DateTime nowUtc) => !IsRevoked && !HasExpired(nowUtc);
 
+    /// <summary>The rule that refused a grant the warrant it names does not cover.</summary>
+    public const string BeyondWarrantRule = "AutonomyGrant.BeyondItsWarrant";
+
+    /// <summary>
+    /// The highest mode that may be granted without a promotion warrant. Above it, somebody is no
+    /// longer looking, and the evidence for that has to have been argued.
+    /// </summary>
+    public static AutonomyMode HighestAttendedMode => AutonomyMode.PrepareForApproval;
+
     /// <summary>
     /// Issues a grant. The caller is expected to have routed this through the action seam under
     /// <see cref="Capability.AutonomyAdministration"/>, which refuses an AI proposer structurally.
     /// </summary>
+    /// <remarks>
+    /// This factory does not itself require a promotion warrant, because Phase 6's simulated
+    /// unattended operation predates the warrant and is written in terms of it. What requires a
+    /// warrant is the production path: <c>AutonomyAdministration.GrantAsync</c> refuses a mode above
+    /// <see cref="HighestAttendedMode"/> unless a warrant covering it is supplied, and an
+    /// architecture test asserts that no other production type calls this method at all.
+    /// </remarks>
     public static AutonomyGrant Issue(
         Capability capability,
         string? actionType,
@@ -248,6 +291,80 @@ public sealed class AutonomyGrant
             granter,
             nowUtc,
             nowUtc.Add(validFor));
+    }
+
+    /// <summary>
+    /// Issues a grant of unattended execution, on the strength of a promotion warrant.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every dimension of the grant must sit inside the warrant: the capability, the environment, the
+    /// action type, the mode, the risk ceiling and the exposure ceiling. A grant that exceeded its
+    /// warrant on any one of them would be a permission nobody argued for, wearing the authority of
+    /// one that was.
+    /// </para>
+    /// <para>
+    /// The grant may be narrower than its warrant, and usually should be. A warrant is what the
+    /// evidence supports; a grant is what somebody is willing to do about it.
+    /// </para>
+    /// </remarks>
+    public static AutonomyGrant IssueBounded(
+        PromotionWarrant warrant,
+        string? actionType,
+        string environmentName,
+        AutonomyMode mode,
+        RiskTier maxRiskTier,
+        Money maxExposure,
+        string limitSetName,
+        string grantedBy,
+        DateTime nowUtc,
+        TimeSpan validFor)
+    {
+        ArgumentNullException.ThrowIfNull(warrant);
+        ArgumentNullException.ThrowIfNull(maxExposure);
+        DateRange.EnsureUtc(nowUtc, nameof(nowUtc));
+
+        var refusal = warrant.WhyItDoesNotCover(
+            warrant.Capability, actionType, environmentName, mode, maxRiskTier, maxExposure, nowUtc);
+
+        if (refusal is not null)
+        {
+            throw new DomainRuleViolationException(BeyondWarrantRule, refusal);
+        }
+
+        // The action class this grant could ever cover has to be one that may run unattended at all.
+        // Checked here as well as at the warrant, because the grant is where the risk ceiling is
+        // finally chosen and a narrower warrant does not make a wider grant safe.
+        var classRefusal = BoundedExecutionRule.Admits(
+            warrant.Capability, ReversibilityClass.Reversible, maxRiskTier, mode);
+
+        if (classRefusal != BoundedExecutionRefusal.None)
+        {
+            throw new DomainRuleViolationException(
+                BeyondWarrantRule,
+                $"a grant of {mode} for {warrant.Capability} up to risk tier {maxRiskTier} is outside " +
+                $"the class that may run unattended: {BoundedExecutionRule.Explain(classRefusal)}");
+        }
+
+        // Everything the attended factory validates still applies, so it is reused rather than
+        // restated - with the mode lowered past its own gate and raised again afterwards. Two copies
+        // of "what makes a grant well formed" would be two places for it to drift.
+        var grant = Issue(
+            warrant.Capability,
+            actionType,
+            environmentName,
+            HighestAttendedMode,
+            maxRiskTier,
+            maxExposure,
+            limitSetName,
+            grantedBy,
+            nowUtc,
+            validFor);
+
+        grant.GrantedMode = mode;
+        grant.PromotionWarrantId = warrant.PromotionWarrantId;
+
+        return grant;
     }
 
     /// <summary>Withdraws the grant. Takes effect on the next resolution.</summary>

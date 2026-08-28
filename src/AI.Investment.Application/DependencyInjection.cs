@@ -89,6 +89,20 @@ public static class DependencyInjection
         // score or a policy, which is what keeps this phase measurement rather than fitting.
         services.AddScoped<ValidationService>();
 
+        // ---- Bounded autonomy. Phase 8. -------------------------------------------------------
+        //
+        // The promotion gate, the live-venue gate and the circuit breaker. All scoped, because each
+        // participates in one unit of work: a warrant, the audit record announcing it and the grant
+        // written under it commit together or not at all.
+        //
+        // Notably absent is anything that promotes. PromotionService assesses and, on a named
+        // person's decision and evidence assessed at that moment, issues a warrant; writing a grant
+        // under it is a separate act through AutonomyAdministration. Nothing here raises autonomy on
+        // its own, and AutonomyCircuitBreaker only ever lowers it.
+        services.AddScoped<PromotionService>();
+        services.AddScoped<LiveVenueService>();
+        services.AddScoped<AutonomyCircuitBreaker>();
+
         services.AddScoped<RegisterKnownSourcesHandler>();
         services.AddScoped<ActivateSourceHandler>();
 

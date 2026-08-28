@@ -119,6 +119,26 @@ public sealed class AppDbContext : DbContext
     /// <summary>What a higher autonomy level would have decided. Never acted on. Phase 6.</summary>
     public DbSet<ShadowDecision> ShadowDecisions => Set<ShadowDecision>();
 
+    /// <summary>
+    /// The warrants permitting unattended execution. Phase 8.
+    /// </summary>
+    /// <remarks>
+    /// Expected to be empty for as long as the measured evidence does not justify one, which is the
+    /// current state. An empty table here is the platform working, not the platform unfinished.
+    /// </remarks>
+    public DbSet<PromotionWarrant> PromotionWarrants => Set<PromotionWarrant>();
+
+    /// <summary>
+    /// Written decisions by two named people that a venue may move real money. Phase 8.
+    /// </summary>
+    /// <remarks>
+    /// The most consequential table in this model, and one that has never held a row. It exists so
+    /// that the day somebody wants to activate a venue, the record they must create already has a
+    /// shape, two signature columns and an expiry - rather than being designed under the pressure of
+    /// wanting the answer to be yes.
+    /// </remarks>
+    public DbSet<LiveVenueAuthorization> LiveVenueAuthorizations => Set<LiveVenueAuthorization>();
+
     /// <summary>The transactional outbox. Phase 6.</summary>
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
@@ -222,6 +242,27 @@ public sealed class AppDbContext : DbContext
                 $"Attempted: {string.Join(", ", tamperedOperations)}.");
         }
 
+        // THIRD, and for the third time for the same reason. A promotion warrant and a live-venue
+        // authorisation are the records of what somebody permitted and why; they are withdrawn by
+        // setting a revocation on the row, never by removing it. A deletion here would erase the
+        // account of a permission that was once in force, which is the only account anybody would
+        // have afterwards. Phase 8.
+        var erasedPermissions = ChangeTracker
+            .Entries()
+            .Where(e => e.State == EntityState.Deleted)
+            .Where(e => IsPermissionRecord(e))
+            .Select(Describe)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (erasedPermissions.Count > 0)
+        {
+            throw new UnauthorizedWriteException(
+                "Promotion warrants and live-venue authorisations are withdrawn by revoking them, " +
+                "never by deleting them. The record of a permission that was once in force is the " +
+                $"only account anybody has of it. Attempted: {string.Join(", ", erasedPermissions)}.");
+        }
+
         if (_writeAuthorization.IsAuthorized)
         {
             return;
@@ -305,6 +346,19 @@ public sealed class AppDbContext : DbContext
     private static bool IsOperationsRecord(EntityEntry entry) =>
         entry.Entity is OperatingCycle or Escalation or ShadowDecision or OutboxMessage ||
         IsOperationsType(RootOwnerType(entry));
+
+    /// <summary>
+    /// The records of what somebody permitted: revocable, never deletable.
+    /// </summary>
+    /// <remarks>
+    /// Deliberately narrower than the operations category. A warrant may be revoked and an
+    /// authorisation withdrawn - both of which are ordinary modifications of an existing row - so
+    /// only deletion is refused here. What must survive is the fact that the permission existed.
+    /// </remarks>
+    private static bool IsPermissionRecord(EntityEntry entry) =>
+        entry.Entity is PromotionWarrant or LiveVenueAuthorization ||
+        RootOwnerType(entry) == typeof(PromotionWarrant) ||
+        RootOwnerType(entry) == typeof(LiveVenueAuthorization);
 
     private static bool IsOperationsType(Type? type) =>
         type == typeof(OperatingCycle) ||

@@ -2151,3 +2151,85 @@ validation namespaces are structurally unable to reach the action seam, the venu
 authorisation window or autonomy administration.
 
 **PHASE 7 — GREEN.**
+
+
+## 2026-08-28 (final) — PHASE 8 IMPLEMENTED, PROMOTION BLOCKED: 1684/1684, build clean
+
+### The precondition
+
+§P marks bounded autonomy "only if Phase 7 justifies it". Phase 7's report exists, was generated
+against a real database and has been read; its verdict is **not established**, because the repository
+holds no opportunities, no price history and no shadow measurements. Promotion is a claim about
+measured behaviour and there is no measurement, so the phase built the machinery that makes that
+refusal real rather than treating it as an obstacle.
+
+**No capability was promoted. Nothing executes automatically. No live venue exists. Autonomy remains
+L3.**
+
+### What was built
+
+The promotion gate - `PromotionCriteria`, `PromotionAssessment`, `PromotionWarrant` - and the grant
+factory that requires a warrant. The bounded-execution rule that fixes the lowest-risk, reversible
+class in code. `DemotionPolicy` and `AutonomyCircuitBreaker` for §K.6's automatic demotion. The
+live-venue gate as an artefact with two signatures rather than a setting. Two tables that are
+expected to stay empty, and a read-only controller that reports the refusal.
+
+### Three refusals that make the gate a gate
+
+A warrant cannot be built from an unjustified assessment: one public factory, no public constructor,
+no overload that skips the check. An assessment fails closed on every absence, reading `IsMeasured`
+before it reads a value, so "we could not tell" is recorded separately from "we looked and it was not
+good enough". And the production path denies an unwarranted grant above the attended ceiling, with an
+architecture test walking the IL of every production member to prove that no other type writes a
+grant at all - a gate is only a gate if it is the only door.
+
+Three capabilities and one mode are outside what any evidence may justify: financial execution, the
+three safety-administration capabilities, and ContinuousBounded.
+
+### Configuration is not authorisation
+
+The live-venue gate refuses a configuration-sourced request **before** it looks at the authorisation,
+so an installation holding a valid authorisation still cannot activate a venue by writing `true`
+somewhere. Asserted from both directions: the same request permitted by hand is refused when it
+arrives from configuration. The gate has one method, returns a decision, and takes no delegate and no
+venue - it cannot act.
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| `dotnet build` (Release, whole solution) | Succeeded - 0 warnings, 0 errors |
+| `dotnet test` (Release, whole solution) | `build_exit=0 test_exit=0` |
+| Suite total | **1684 total, 1684 passed, 0 failed, 0 skipped** |
+| Migration | `20260828155059_Phase8BoundedAutonomy` applied; both tables round-tripped |
+| Secret scan | **0 findings** |
+
+Per assembly: Domain 938, Application 290, Safety 258, Integration 127, Architecture 50, Api 21.
+
+The mutation gate was not run and not extended: it covers seventeen files, Phase 8 changed none of
+them, and the Phase 6 result of 73.53 % stands unaffected.
+
+### Issues found and fixed
+
+1. **An unmeasured excess return refused under the wrong name**, reporting "no better than the
+   benchmark" for a metric that could not be measured at all. Split, so unmeasurable refuses under
+   "performance not established" - the same distinction the validation report makes one layer down.
+2. **A warrant could be deleted inside an authorisation window.** The write guard's never-delete
+   categories covered seam bookkeeping and operations records but not permissions. Added a third
+   category: warrants and live-venue authorisations are revoked, never deleted. The record of a
+   permission that was once in force is the only account anybody has of it.
+3. **The architecture test excluded the wrong type** - the body of `GrantAsync` lives in a
+   compiler-generated state machine nested inside the service, so excluding the outer type alone
+   excluded nothing.
+4. **A test could not express "unknown"**, defaulting a null evidence age to a real one and never
+   checking the case it was written for.
+
+### Safety boundary
+
+Unchanged and re-asserted. The only execution venue reports itself simulated, `FinancialExecution` is
+refused unconditionally and structurally, no warrant or grant can be issued for it, and no live
+credential, live venue or real-money path was introduced. The analysis half of the platform cannot
+hold a venue, so it cannot hold a credential.
+
+**PHASE 8 — IMPLEMENTED, PROMOTION BLOCKED.**
+Blocker: Phase 7 evidence does not currently justify L4 autonomy.

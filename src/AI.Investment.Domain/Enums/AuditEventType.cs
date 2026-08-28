@@ -106,4 +106,37 @@ public enum AuditEventType
     /// mechanics; this is the platform saying it has stopped trying to tell somebody something.
     /// </remarks>
     OutboxAbandoned = 22,
+
+    /// <summary>
+    /// The measured evidence was weighed against the bar for unattended execution. Phase 8.
+    /// </summary>
+    /// <remarks>
+    /// Recorded whether or not it justified anything, and expected to say it did not. An assessment
+    /// that is only written down when it is favourable is a record of good news rather than a record.
+    /// </remarks>
+    PromotionAssessed = 23,
+
+    /// <summary>A named person issued a warrant permitting unattended execution. Phase 8.</summary>
+    PromotionWarrantIssued = 24,
+
+    /// <summary>A warrant permitting unattended execution was withdrawn. Phase 8.</summary>
+    PromotionWarrantRevoked = 25,
+
+    /// <summary>
+    /// A venue that moves real money was asked about and refused. Phase 8.
+    /// </summary>
+    /// <remarks>
+    /// The refusal is recorded, not just the authorisation. The interesting question afterwards is
+    /// usually who asked and how often, and an audit trail that only holds the successes cannot
+    /// answer it.
+    /// </remarks>
+    LiveVenueRefused = 26,
+
+    /// <summary>
+    /// Two named people authorised a venue that moves real money. Phase 8.
+    /// </summary>
+    /// <remarks>
+    /// The most consequential record this system can hold, and one that has never been written.
+    /// </remarks>
+    LiveVenueAuthorised = 27,
 }
