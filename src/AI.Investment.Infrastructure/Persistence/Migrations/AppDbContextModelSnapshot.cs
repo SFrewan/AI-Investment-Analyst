@@ -238,6 +238,96 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                     b.ToTable("audit_records", (string)null);
                 });
 
+            modelBuilder.Entity("AI.Investment.Domain.Autonomy.AutonomyGrant", b =>
+                {
+                    b.Property<Guid>("AutonomyGrantId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ActionType")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("action_type");
+
+                    b.Property<string>("Capability")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("capability");
+
+                    b.Property<DateTime?>("DemotedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("demoted_at_utc");
+
+                    b.Property<string>("DemotedMode")
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("demoted_mode");
+
+                    b.Property<int>("DemotionCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("demotion_count");
+
+                    b.Property<string>("DemotionReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("demotion_reason");
+
+                    b.Property<string>("EnvironmentName")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("environment");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at_utc");
+
+                    b.Property<DateTime>("GrantedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("granted_at_utc");
+
+                    b.Property<string>("GrantedBy")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("granted_by");
+
+                    b.Property<string>("GrantedMode")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("granted_mode");
+
+                    b.Property<string>("LimitSetName")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("limit_set");
+
+                    b.Property<string>("MaxRiskTier")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("max_risk_tier");
+
+                    b.Property<string>("RevocationReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("revocation_reason");
+
+                    b.Property<DateTime?>("RevokedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("revoked_at_utc");
+
+                    b.HasKey("AutonomyGrantId");
+
+                    b.HasIndex("Capability", "EnvironmentName", "ExpiresAtUtc")
+                        .HasDatabaseName("ix_autonomy_grants_lookup");
+
+                    b.ToTable("autonomy_grants", (string)null);
+                });
+
             modelBuilder.Entity("AI.Investment.Domain.Capital.LedgerEntry", b =>
                 {
                     b.Property<Guid>("LedgerEntryId")
@@ -476,6 +566,179 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                     b.ToTable("observations", (string)null);
                 });
 
+            modelBuilder.Entity("AI.Investment.Domain.Operations.Escalation", b =>
+                {
+                    b.Property<Guid>("EscalationId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime?>("AcknowledgedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("acknowledged_at_utc");
+
+                    b.Property<string>("AcknowledgedBy")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("acknowledged_by");
+
+                    b.Property<string>("Capability")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("capability");
+
+                    b.Property<Guid?>("CycleId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("cycle_id");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("expires_at_utc");
+
+                    b.Property<string>("Explanation")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("explanation");
+
+                    b.Property<Guid?>("ProposalId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("proposal_id");
+
+                    b.Property<DateTime>("RaisedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("raised_at_utc");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("reason");
+
+                    b.Property<string>("Resolution")
+                        .HasMaxLength(622)
+                        .HasColumnType("character varying(622)")
+                        .HasColumnName("resolution");
+
+                    b.Property<DateTime?>("ResolvedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("resolved_at_utc");
+
+                    b.HasKey("EscalationId");
+
+                    b.HasIndex("ResolvedAtUtc", "ExpiresAtUtc")
+                        .HasDatabaseName("ix_escalations_outstanding");
+
+                    b.ToTable("escalations", (string)null);
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Operations.OperatingCycle", b =>
+                {
+                    b.Property<Guid>("CycleId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Budget")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("budget");
+
+                    b.Property<string>("Capability")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("capability");
+
+                    b.Property<string>("Consumption")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("consumption");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("correlation_id");
+
+                    b.Property<int>("EscalationCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("escalation_count");
+
+                    b.Property<DateTime?>("LeaseExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lease_expires_at_utc");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("lease_owner");
+
+                    b.Property<string>("Stage")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("stage");
+
+                    b.Property<DateTime>("StartedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("started_at_utc");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<DateTime?>("StoppedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("stopped_at_utc");
+
+                    b.Property<string>("StoppedReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("stopped_reason");
+
+                    b.Property<string>("TemplateName")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("template");
+
+                    b.Property<string>("TriggerKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("trigger_key");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.Property<Guid?>("WatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("watch_id");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("CycleId");
+
+                    b.HasIndex("TriggerKey")
+                        .IsUnique()
+                        .HasDatabaseName("ux_operating_cycles_trigger_key");
+
+                    b.HasIndex("Status", "UpdatedAtUtc")
+                        .HasDatabaseName("ix_operating_cycles_runnable");
+
+                    b.HasIndex("WatchId", "StartedAtUtc")
+                        .HasDatabaseName("ix_operating_cycles_watch");
+
+                    b.ToTable("operating_cycles", (string)null);
+                });
+
             modelBuilder.Entity("AI.Investment.Domain.Opportunities.Opportunity", b =>
                 {
                     b.Property<Guid>("OpportunityId")
@@ -598,6 +861,80 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                     b.ToTable("unreplayable_evidence", (string)null);
                 });
 
+            modelBuilder.Entity("AI.Investment.Domain.Shadow.ShadowDecision", b =>
+                {
+                    b.Property<Guid>("ShadowDecisionId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ActionType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("action_type");
+
+                    b.Property<string>("ActualMode")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("actual_mode");
+
+                    b.Property<string>("ActualOutcome")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("actual_outcome");
+
+                    b.Property<string>("Capability")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("capability");
+
+                    b.Property<Guid?>("CycleId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("cycle_id");
+
+                    b.Property<Guid>("ProposalId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("proposal_id");
+
+                    b.Property<string>("Reason")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)")
+                        .HasColumnName("reason");
+
+                    b.Property<DateTime>("RecordedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("recorded_at_utc");
+
+                    b.Property<string>("RiskTier")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("risk_tier");
+
+                    b.Property<string>("ShadowMode")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("shadow_mode");
+
+                    b.Property<string>("ShadowOutcome")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("character varying(30)")
+                        .HasColumnName("shadow_outcome");
+
+                    b.HasKey("ShadowDecisionId");
+
+                    b.HasIndex("RecordedAtUtc")
+                        .HasDatabaseName("ix_shadow_decisions_recorded");
+
+                    b.ToTable("shadow_decisions", (string)null);
+                });
+
             modelBuilder.Entity("AI.Investment.Domain.Sources.DataSource", b =>
                 {
                     b.Property<string>("Id")
@@ -668,6 +1005,77 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                     b.ToTable("data_sources", (string)null);
                 });
 
+            modelBuilder.Entity("AI.Investment.Domain.Watching.Watch", b =>
+                {
+                    b.Property<Guid>("WatchId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Capability")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("capability");
+
+                    b.Property<TimeSpan>("Cooldown")
+                        .HasColumnType("interval")
+                        .HasColumnName("cooldown");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.Property<string>("CycleTemplate")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("cycle_template");
+
+                    b.Property<string>("DisabledReason")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("disabled_reason");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("enabled");
+
+                    b.Property<int>("FireCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("fire_count");
+
+                    b.Property<DateTime?>("LastFiredAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("last_fired_at_utc");
+
+                    b.Property<TimeSpan>("MaxSignalAge")
+                        .HasColumnType("interval")
+                        .HasColumnName("max_signal_age");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("name");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("integer")
+                        .HasColumnName("priority");
+
+                    b.Property<string>("TriggerType")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("trigger_type");
+
+                    b.HasKey("WatchId");
+
+                    b.HasIndex("TriggerType", "Enabled")
+                        .HasDatabaseName("ix_watches_trigger");
+
+                    b.ToTable("watches", (string)null);
+                });
+
             modelBuilder.Entity("AI.Investment.Infrastructure.Persistence.KillSwitchFlag", b =>
                 {
                     b.Property<Guid>("KillSwitchFlagId")
@@ -700,6 +1108,93 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ux_kill_switch_capability");
 
                     b.ToTable("kill_switch", (string)null);
+                });
+
+            modelBuilder.Entity("AI.Investment.Infrastructure.Persistence.OutboxMessage", b =>
+                {
+                    b.Property<Guid>("OutboxMessageId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer")
+                        .HasColumnName("attempts");
+
+                    b.Property<string>("CorrelationId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("correlation_id");
+
+                    b.Property<Guid?>("CycleId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("cycle_id");
+
+                    b.Property<string>("DedupKey")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("dedup_key");
+
+                    b.Property<DateTime?>("DispatchedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("dispatched_at_utc");
+
+                    b.Property<string>("LastError")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("last_error");
+
+                    b.Property<DateTime?>("LeaseExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("lease_expires_at_utc");
+
+                    b.Property<string>("LeaseOwner")
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("lease_owner");
+
+                    b.Property<string>("MessageType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("message_type");
+
+                    b.Property<DateTime>("NextAttemptAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("next_attempt_at_utc");
+
+                    b.Property<DateTime>("OccurredAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at_utc");
+
+                    b.Property<string>("Payload")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("payload");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("status");
+
+                    b.Property<uint>("xmin")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("xid")
+                        .HasColumnName("xmin");
+
+                    b.HasKey("OutboxMessageId");
+
+                    b.HasIndex("DedupKey")
+                        .IsUnique()
+                        .HasDatabaseName("ux_outbox_messages_dedup_key");
+
+                    b.HasIndex("Status", "NextAttemptAtUtc")
+                        .HasDatabaseName("ix_outbox_messages_dispatch");
+
+                    b.ToTable("outbox_messages", (string)null);
                 });
 
             modelBuilder.Entity("AI.Investment.Infrastructure.Persistence.ProcessedAction", b =>
@@ -752,6 +1247,36 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                         });
 
                     b.Navigation("MaxAmount")
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Autonomy.AutonomyGrant", b =>
+                {
+                    b.OwnsOne("AI.Investment.Domain.ValueObjects.Money", "MaxExposure", b1 =>
+                        {
+                            b1.Property<Guid>("AutonomyGrantId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 4)
+                                .HasColumnType("numeric(18,4)")
+                                .HasColumnName("max_exposure");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("max_exposure_currency");
+
+                            b1.HasKey("AutonomyGrantId");
+
+                            b1.ToTable("autonomy_grants");
+
+                            b1.WithOwner()
+                                .HasForeignKey("AutonomyGrantId");
+                        });
+
+                    b.Navigation("MaxExposure")
                         .IsRequired();
                 });
 
@@ -1168,6 +1693,36 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("AI.Investment.Domain.Shadow.ShadowDecision", b =>
+                {
+                    b.OwnsOne("AI.Investment.Domain.ValueObjects.Money", "Exposure", b1 =>
+                        {
+                            b1.Property<Guid>("ShadowDecisionId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 4)
+                                .HasColumnType("numeric(18,4)")
+                                .HasColumnName("exposure");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("exposure_currency");
+
+                            b1.HasKey("ShadowDecisionId");
+
+                            b1.ToTable("shadow_decisions");
+
+                            b1.WithOwner()
+                                .HasForeignKey("ShadowDecisionId");
+                        });
+
+                    b.Navigation("Exposure")
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("AI.Investment.Domain.Sources.DataSource", b =>
                 {
                     b.OwnsOne("AI.Investment.Domain.Sources.LicensingTerms", "Licensing", b1 =>
@@ -1261,6 +1816,67 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Verification")
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Watching.Watch", b =>
+                {
+                    b.OwnsOne("AI.Investment.Domain.Watching.TriggerCondition", "Condition", b1 =>
+                        {
+                            b1.Property<Guid>("WatchId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<string>("Comparison")
+                                .IsRequired()
+                                .HasMaxLength(40)
+                                .HasColumnType("character varying(40)")
+                                .HasColumnName("condition_comparison");
+
+                            b1.Property<TimeSpan?>("Interval")
+                                .HasColumnType("interval")
+                                .HasColumnName("condition_interval");
+
+                            b1.Property<decimal?>("Threshold")
+                                .HasPrecision(18, 6)
+                                .HasColumnType("numeric(18,6)")
+                                .HasColumnName("condition_threshold");
+
+                            b1.HasKey("WatchId");
+
+                            b1.ToTable("watches");
+
+                            b1.WithOwner()
+                                .HasForeignKey("WatchId");
+                        });
+
+                    b.OwnsOne("AI.Investment.Domain.Watching.WatchTarget", "Target", b1 =>
+                        {
+                            b1.Property<Guid>("WatchId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<string>("Identifier")
+                                .HasMaxLength(200)
+                                .HasColumnType("character varying(200)")
+                                .HasColumnName("target_identifier");
+
+                            b1.Property<string>("Kind")
+                                .IsRequired()
+                                .HasMaxLength(60)
+                                .HasColumnType("character varying(60)")
+                                .HasColumnName("target_kind");
+
+                            b1.HasKey("WatchId");
+
+                            b1.ToTable("watches");
+
+                            b1.WithOwner()
+                                .HasForeignKey("WatchId");
+                        });
+
+                    b.Navigation("Condition")
+                        .IsRequired();
+
+                    b.Navigation("Target")
                         .IsRequired();
                 });
 #pragma warning restore 612, 618

@@ -18,7 +18,9 @@ using AI.Investment.Infrastructure.Execution;
 using AI.Investment.Infrastructure.Configuration;
 using AI.Investment.Infrastructure.Ingestion;
 using AI.Investment.Infrastructure.Ingestion.Providers;
+using AI.Investment.Application.Operations;
 using AI.Investment.Infrastructure.Normalization;
+using AI.Investment.Infrastructure.Operations;
 using AI.Investment.Infrastructure.Persistence;
 using AI.Investment.Infrastructure.Persistence.Repositories;
 using AI.Investment.Infrastructure.Policy;
@@ -49,6 +51,7 @@ public static class DependencyInjection
         AddIngestion(services, configuration);
         AddAi(services, configuration);
         AddOpportunities(services);
+        AddOperations(services, configuration);
 
         services.AddSingleton<IClock, SystemClock>();
 
@@ -319,9 +322,72 @@ public static class DependencyInjection
         // not leak across them.
         services.AddScoped<IWriteAuthorization, ScopedWriteAuthorization>();
 
+        // Scoped for the same reason, and it is the same kind of thing: an ambient fact about the
+        // work in flight that must not leak into work started beside it. The cycle runner opens one
+        // around a dispatch; outside it, a cycle-driven proposal is refused by the policy engine.
+        services.AddScoped<IAutonomyContext, AutonomyContext>();
+
         services.AddScoped<IPolicyContextProvider, ConfiguredPolicyContextProvider>();
         services.AddScoped<IAuditSink, EfAuditSink>();
         services.AddScoped<IActionExecutionStore, EfActionExecutionStore>();
         services.AddScoped<IIdempotencyStore, EfIdempotencyStore>();
+    }
+    /// <summary>
+    /// Registers continuous operation: watches, cycles, grants, escalations, shadow measurement and
+    /// the outbox.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every store is scoped, because each shares the request-scoped context and therefore the
+    /// transaction. That is what makes the outbox transactional rather than merely a table: the
+    /// message and the change that caused it are staged on the same context and commit together.
+    /// </para>
+    /// <para>
+    /// The four notification handlers deliver into the append-only audit trail, which is the
+    /// destination this phase has. There is deliberately no email, pager or chat integration here:
+    /// inventing a notification plane on the way past is how one ends up with an unconfigurable one.
+    /// </para>
+    /// </remarks>
+    /// <summary>The message types that are delivered into the audit trail.</summary>
+    private static readonly string[] NotifiedMessageTypes =
+    [
+        OperationsMessages.EscalationRaised,
+        OperationsMessages.CycleFinished,
+        OperationsMessages.ShadowDecisionRecorded,
+        OperationsMessages.OutboxAbandoned,
+    ];
+
+    private static void AddOperations(IServiceCollection services, IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        // Deliberately NOT ValidateOnStart, for the same reason as SafetyOptions: a misconfigured
+        // ceiling should leave the platform running and failing closed, where an operator can see
+        // it, rather than preventing the host from starting at all.
+        services.AddOptions<OperationsOptions>()
+            .Bind(configuration.GetSection(OperationsOptions.SectionName))
+            .ValidateDataAnnotations();
+
+        services.AddScoped<IAutonomyGrantStore, EfAutonomyGrantStore>();
+        services.AddScoped<IWatchStore, EfWatchStore>();
+        services.AddScoped<ICycleStore, EfCycleStore>();
+        services.AddScoped<IEscalationStore, EfEscalationStore>();
+        services.AddScoped<IShadowDecisionStore, EfShadowDecisionStore>();
+
+        services.AddScoped<IOutbox, EfOutbox>();
+        services.AddScoped<IOutboxDispatcher, OutboxDispatcher>();
+
+        services.AddSingleton<IAdmissionLimitProvider, ConfiguredAdmissionLimitProvider>();
+        services.AddSingleton<ICycleBudgetProvider, ConfiguredCycleBudgetProvider>();
+
+        foreach (var messageType in NotifiedMessageTypes)
+        {
+            var type = messageType;
+
+            services.AddScoped<IOutboxHandler>(provider => new AuditNotificationHandler(
+                type,
+                provider.GetRequiredService<IAuditSink>(),
+                provider.GetRequiredService<IClock>()));
+        }
     }
 }

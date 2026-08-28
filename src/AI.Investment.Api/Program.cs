@@ -162,6 +162,13 @@ public sealed class Program
             builder.Configuration,
             DataPlaneOptions.SectionName);
 
+        // What this instance runs of the operating loop. Both halves default to off: unattended
+        // operation does not begin because a host happened to start, and this is the loop that
+        // proposes actions.
+        builder.Services.AddValidatedOptions<OperationsHostOptions>(
+            builder.Configuration,
+            OperationsHostOptions.SectionName);
+
         // ---- Application and infrastructure ---------------------------------------------
         // The ONLY place in this project permitted to reference AI.Investment.Infrastructure.
         // An architecture test fails the build if an Infrastructure type is used anywhere else.
@@ -190,6 +197,12 @@ public sealed class Program
         // platform that destroys evidence - enable it on exactly one instance.
         builder.Services.AddHostedService<SourceSeedingHostedService>();
         builder.Services.AddHostedService<RetentionSweepHostedService>();
+
+        // Continuous operation. Registered unconditionally and disabled in configuration, for the
+        // same reason as the two above: the log then says "disabled" rather than saying nothing,
+        // and the decision lives in one place instead of being split between here and there.
+        builder.Services.AddHostedService<OperatingCycleHostedService>();
+        builder.Services.AddHostedService<OutboxDispatchHostedService>();
 
         // ---- Web -------------------------------------------------------------------------
         builder.Services.AddControllers();

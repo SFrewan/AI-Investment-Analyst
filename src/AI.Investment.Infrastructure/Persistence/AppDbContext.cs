@@ -2,15 +2,21 @@ using AI.Investment.Application.Abstractions;
 using AI.Investment.Domain.Actions;
 using AI.Investment.Domain.Approvals;
 using AI.Investment.Domain.Auditing;
+using AI.Investment.Domain.Autonomy;
 using AI.Investment.Domain.Capital;
 using AI.Investment.Domain.Companies;
 using AI.Investment.Domain.Ingestion;
 using AI.Investment.Domain.Normalization;
 using AI.Investment.Domain.Observations;
+using AI.Investment.Domain.Operations;
 using AI.Investment.Domain.Opportunities;
 using AI.Investment.Domain.Retention;
+using AI.Investment.Domain.Shadow;
 using AI.Investment.Domain.Sources;
+using AI.Investment.Domain.Watching;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Metadata;
 
 namespace AI.Investment.Infrastructure.Persistence;
 
@@ -39,6 +45,17 @@ namespace AI.Investment.Infrastructure.Persistence;
 /// <see cref="DataSource"/> and <see cref="IngestionRun"/> joined the model in the persistence
 /// stage. Only the latter is exempt: the registry is ordinary domain state, so registering or
 /// activating a source is a side effect that must pass through the seam like any other.
+/// </para>
+/// <para>
+/// <strong>Phase 6 adds a second, narrower category.</strong> An operating cycle, an escalation, a
+/// shadow decision and a queued message are the platform's account of its own unattended running,
+/// and they have the same problem the audit trail has: the moment they most need to be writable is
+/// the moment policy has refused something, when by definition nothing is authorised. They are
+/// therefore creatable without a window - but unlike the five above they are not simply exempt.
+/// Each has an explicit, per-type list of the fields that may change afterwards, every other field
+/// is frozen, and none of them may be deleted. See <see cref="IsPermittedOperationsUpdate"/>: the
+/// point of that method is that "the platform may record its own progress" never widens into "the
+/// platform may edit what it recorded".
 /// </para>
 /// </remarks>
 public sealed class AppDbContext : DbContext
@@ -86,6 +103,24 @@ public sealed class AppDbContext : DbContext
 
     /// <summary>The durable half of the kill switch. Phase 5.</summary>
     public DbSet<KillSwitchFlag> KillSwitchFlags => Set<KillSwitchFlag>();
+
+    /// <summary>What a human has permitted a capability to do unattended, and until when. Phase 6.</summary>
+    public DbSet<AutonomyGrant> AutonomyGrants => Set<AutonomyGrant>();
+
+    /// <summary>Standing deterministic instructions to start a cycle. Phase 6.</summary>
+    public DbSet<Watch> Watches => Set<Watch>();
+
+    /// <summary>The operating loop, persisted as a resumable state machine. Phase 6.</summary>
+    public DbSet<OperatingCycle> OperatingCycles => Set<OperatingCycle>();
+
+    /// <summary>Questions put to a human, with expiry. Phase 6.</summary>
+    public DbSet<Escalation> Escalations => Set<Escalation>();
+
+    /// <summary>What a higher autonomy level would have decided. Never acted on. Phase 6.</summary>
+    public DbSet<ShadowDecision> ShadowDecisions => Set<ShadowDecision>();
+
+    /// <summary>The transactional outbox. Phase 6.</summary>
+    public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     /// <summary>
     /// Commits domain changes. Throws <see cref="UnauthorizedWriteException"/> unless the
@@ -166,6 +201,27 @@ public sealed class AppDbContext : DbContext
                 $"deleted. Attempted: {string.Join(", ", mutatedBookkeeping)}.");
         }
 
+        // SECOND, and for the same reason. An operations record may report its own progress and may
+        // never be deleted or have its identity rewritten. This runs whether or not an action is
+        // authorised, because an authorisation window permits an effect - it has never permitted
+        // editing the account of what the platform did.
+        var tamperedOperations = ChangeTracker
+            .Entries()
+            .Where(IsOperationsRecord)
+            .Where(e => e.State is EntityState.Deleted ||
+                (e.State == EntityState.Modified && !IsProgressUpdate(e)))
+            .Select(Describe)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (tamperedOperations.Count > 0)
+        {
+            throw new UnauthorizedWriteException(
+                "Operating cycles, escalations, shadow decisions and queued messages may record " +
+                "their own progress but may not be deleted or have their identity rewritten. " +
+                $"Attempted: {string.Join(", ", tamperedOperations)}.");
+        }
+
         if (_writeAuthorization.IsAuthorized)
         {
             return;
@@ -175,6 +231,8 @@ public sealed class AppDbContext : DbContext
             .Entries()
             .Where(e => e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted)
             .Where(e => !IsSeamBookkeeping(e.Entity))
+            .Where(e => !(e.State == EntityState.Added && IsOperationsRecord(e)))
+            .Where(e => !(e.State == EntityState.Modified && IsProgressUpdate(e)))
             .Select(e => $"{e.Entity.GetType().Name}:{e.State}")
             .Distinct(StringComparer.Ordinal)
             .ToList();
@@ -225,4 +283,151 @@ public sealed class AppDbContext : DbContext
     private static bool IsSeamBookkeeping(object entity) =>
         entity is AuditRecord or ActionExecution or ProcessedAction or IngestionRun
             or QuarantinedPayload;
+
+    /// <summary>
+    /// The platform's account of its own unattended running: creatable without a window, never
+    /// deletable, and modifiable only where <see cref="IsProgressUpdate"/> says so.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Creatable without an authorisation window, because the situation they exist to describe is
+    /// most often the situation in which nothing is authorised: a cycle that was refused, an
+    /// escalation raised because of that refusal, a shadow measurement of a decision that denied,
+    /// and the queued message telling somebody about it.
+    /// </para>
+    /// <para>
+    /// <see cref="AutonomyGrant"/> is deliberately absent, and so is <see cref="Watch"/>. A grant is
+    /// the permission itself and a watch is a standing instruction to spend money; creating either
+    /// is ordinary domain state and goes through the seam like anything else. Only a watch's record
+    /// of having fired is progress, and that appears in <see cref="IsProgressUpdate"/> alone.
+    /// </para>
+    /// </remarks>
+    private static bool IsOperationsRecord(EntityEntry entry) =>
+        entry.Entity is OperatingCycle or Escalation or ShadowDecision or OutboxMessage ||
+        IsOperationsType(RootOwnerType(entry));
+
+    private static bool IsOperationsType(Type? type) =>
+        type == typeof(OperatingCycle) ||
+        type == typeof(Escalation) ||
+        type == typeof(ShadowDecision) ||
+        type == typeof(OutboxMessage);
+
+    /// <summary>
+    /// The type of the aggregate an owned entry ultimately belongs to, or null when it owns itself.
+    /// </summary>
+    /// <remarks>
+    /// An owned value is tracked as its own entry, so a shadow decision's exposure arrives here as
+    /// its own <c>Money</c> row rather than as part of the decision. Without this walk it would fall
+    /// through to the unauthorised-write check, and a measurement of a denied action - the case that
+    /// matters most - could not be recorded.
+    /// </remarks>
+    private static Type? RootOwnerType(EntityEntry entry)
+    {
+        var ownership = entry.Metadata.FindOwnership();
+        IEntityType? owner = null;
+
+        while (ownership is not null)
+        {
+            owner = ownership.PrincipalEntityType;
+            ownership = owner.FindOwnership();
+        }
+
+        return owner?.ClrType;
+    }
+
+    /// <summary>
+    /// Whether a modification records progress rather than rewriting what a row is about.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The narrow half of the Phase 6 exemption, and the reason it is a list of column names rather
+    /// than a type. A cycle may advance, spend and stop; a queued message may change its delivery
+    /// state; a watch may record that it fired. None of them may change what it is <em>about</em> -
+    /// the cycle's trigger key and budget, the message's type and payload, the watch's condition and
+    /// cooldown - because that would let the account of a run be rewritten into the account of a
+    /// different run, and would let a watch's own firing record loosen the cooldown that produced it.
+    /// </para>
+    /// <para>
+    /// An owned value of one of these records is written when the record is created and never
+    /// afterwards, so refusing every modification of one is the correct rule rather than a
+    /// restrictive one. A cycle's budget and consumption are stored as single converted columns
+    /// precisely so that this method stays a statement about named columns.
+    /// </para>
+    /// </remarks>
+    private static bool IsProgressUpdate(EntityEntry entry)
+    {
+        var permitted = entry.Entity switch
+        {
+            OperatingCycle => CycleProgressFields,
+            OutboxMessage => OutboxDeliveryFields,
+            Watch => WatchFiringFields,
+            _ => Array.Empty<string>(),
+        };
+
+        if (permitted.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (var property in entry.Properties)
+        {
+            if (property.IsModified &&
+                !permitted.Contains(property.Metadata.Name, StringComparer.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static readonly string[] CycleProgressFields =
+    [
+        nameof(OperatingCycle.Status),
+        nameof(OperatingCycle.Stage),
+        nameof(OperatingCycle.UpdatedAtUtc),
+        nameof(OperatingCycle.StoppedAtUtc),
+        nameof(OperatingCycle.StoppedReason),
+        nameof(OperatingCycle.LeaseOwner),
+        nameof(OperatingCycle.LeaseExpiresAtUtc),
+        nameof(OperatingCycle.EscalationCount),
+        nameof(OperatingCycle.Consumption),
+    ];
+
+    private static readonly string[] OutboxDeliveryFields =
+    [
+        nameof(OutboxMessage.Status),
+        nameof(OutboxMessage.Attempts),
+        nameof(OutboxMessage.NextAttemptAtUtc),
+        nameof(OutboxMessage.DispatchedAtUtc),
+        nameof(OutboxMessage.LastError),
+        nameof(OutboxMessage.LeaseOwner),
+        nameof(OutboxMessage.LeaseExpiresAtUtc),
+    ];
+
+    /// <summary>
+    /// A watch's record of having fired. Not its condition, its cooldown or whether it is enabled -
+    /// a firing that could relax the cooldown it was subject to would be no cooldown at all.
+    /// </summary>
+    private static readonly string[] WatchFiringFields =
+    [
+        nameof(Watch.LastFiredAtUtc),
+        nameof(Watch.FireCount),
+    ];
+
+    private static string Describe(EntityEntry entry)
+    {
+        if (entry.State != EntityState.Modified)
+        {
+            return $"{entry.Entity.GetType().Name}:{entry.State}";
+        }
+
+        var changed = entry.Properties
+            .Where(p => p.IsModified)
+            .Select(p => p.Metadata.Name)
+            .OrderBy(name => name, StringComparer.Ordinal)
+            .ToList();
+
+        return $"{entry.Entity.GetType().Name}:Modified({string.Join("|", changed)})";
+    }
 }

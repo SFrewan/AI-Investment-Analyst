@@ -198,7 +198,10 @@ public sealed class PolicyDecisionReasonTests
     /// ordering is itself a safety property: the structural prohibitions are evaluated before the
     /// configurable rules so that no configuration can pre-empt them. A test that only checked
     /// membership would pass if the order were reversed, and would also pass if a rule silently
-    /// stopped recording itself - which is exactly what a mutant demonstrated.
+    /// stopped recording itself - which is exactly what a mutant demonstrated. Phase 6 inserted two
+/// rules into this sequence - the structural check that an unattended action carries a resolved
+/// grant, and the autonomy ceiling - and the assertions below state the whole order, so a rule
+/// added in the wrong place fails here rather than passing quietly.
     /// </remarks>
     [Fact]
     public void A_permitted_decision_records_every_rule_it_passed_in_order()
@@ -214,10 +217,12 @@ public sealed class PolicyDecisionReasonTests
             PolicyEngine.CapabilityDefinedPolicy,
             PolicyEngine.AiMayNotAdministerSafetyPolicy,
             PolicyEngine.FinancialExecutionUnavailablePolicy,
+            PolicyEngine.AutonomyResolvedPolicy,
             PolicyEngine.CapabilityEnabledPolicy,
             PolicyEngine.AiProposerAllowedPolicy,
             PolicyEngine.IrreversibleRequiresApprovalPolicy,
             PolicyEngine.RiskTierWithinAutoExecutePolicy,
+            PolicyEngine.AutonomyCeilingPolicy,
         ];
 
         Assert.Equal(expected, decision.EvaluatedPolicies);
@@ -242,6 +247,7 @@ public sealed class PolicyDecisionReasonTests
             PolicyEngine.CapabilityDefinedPolicy,
             PolicyEngine.AiMayNotAdministerSafetyPolicy,
             PolicyEngine.FinancialExecutionUnavailablePolicy,
+            PolicyEngine.AutonomyResolvedPolicy,
             PolicyEngine.CapabilityEnabledPolicy,
         ];
 

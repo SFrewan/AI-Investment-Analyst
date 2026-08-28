@@ -4,7 +4,8 @@ namespace AI.Investment.Domain.Enums;
 /// <remarks>
 /// Deliberately small in Phase 1. Later phases add ingestion, analysis, approval decision,
 /// outcome measurement and autonomy-grant events; the record shape is designed to take them
-/// without a schema rewrite.
+/// without a schema rewrite. Phase 6 exercised that design: the members from 10 onwards were added
+/// with no change to <c>AuditRecord</c>'s columns and no migration of the table.
 /// </remarks>
 public enum AuditEventType
 {
@@ -44,4 +45,65 @@ public enum AuditEventType
 
     /// <summary>A whole analysis pipeline run finished. Phase 4.</summary>
     AnalysisCompleted = 9,
+
+    /// <summary>An operating cycle started. Phase 6.</summary>
+    CycleStarted = 10,
+
+    /// <summary>
+    /// An operating cycle stopped short of completing - a budget, a limit, or an escalation. Phase 6.
+    /// </summary>
+    /// <remarks>
+    /// Its own event rather than a completion with a flag. Suspension is the interesting outcome in
+    /// unattended operation: a run of them is the shape of a system that is trying to do something
+    /// it is not allowed to do, and that pattern is invisible if it is a column on "finished".
+    /// </remarks>
+    CycleSuspended = 11,
+
+    /// <summary>An operating cycle reached its last stage. Phase 6.</summary>
+    CycleCompleted = 12,
+
+    /// <summary>A watch fired and started a cycle. Phase 6.</summary>
+    WatchFired = 13,
+
+    /// <summary>
+    /// A watch would have fired and was held back - cooldown, backpressure, or a duplicate. Phase 6.
+    /// </summary>
+    /// <remarks>
+    /// Recorded, not discarded. Suppressions are how a trigger storm looks from the inside, and a
+    /// suppression count that climbs while the firing count stays flat is the control working. A
+    /// suppression count of zero during a volatile session is a control that is not.
+    /// </remarks>
+    WatchSuppressed = 14,
+
+    /// <summary>Something was put to a human. Phase 6.</summary>
+    EscalationRaised = 15,
+
+    /// <summary>A human answered. Phase 6.</summary>
+    EscalationResolved = 16,
+
+    /// <summary>A human granted a capability some autonomy. Phase 6.</summary>
+    AutonomyGranted = 17,
+
+    /// <summary>A grant was withdrawn. Phase 6.</summary>
+    AutonomyRevoked = 18,
+
+    /// <summary>A measured threshold was crossed and a grant dropped a level automatically. Phase 6.</summary>
+    AutonomyDemoted = 19,
+
+    /// <summary>
+    /// What a higher autonomy level would have decided was recorded. Nothing was executed. Phase 6.
+    /// </summary>
+    ShadowDecisionRecorded = 20,
+
+    /// <summary>A queued message was delivered. Phase 6.</summary>
+    OutboxDispatched = 21,
+
+    /// <summary>
+    /// A queued message exhausted its retries and was abandoned. Phase 6.
+    /// </summary>
+    /// <remarks>
+    /// The one outbox outcome that must never be quiet. Everything else about the outbox is
+    /// mechanics; this is the platform saying it has stopped trying to tell somebody something.
+    /// </remarks>
+    OutboxAbandoned = 22,
 }

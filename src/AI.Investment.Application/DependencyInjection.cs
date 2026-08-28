@@ -1,4 +1,5 @@
 using AI.Investment.Application.Actions;
+using AI.Investment.Application.Autonomy;
 using AI.Investment.Application.Capital;
 using AI.Investment.Application.Companies.CreateCompany;
 using AI.Investment.Application.Companies.GetCompany;
@@ -6,6 +7,7 @@ using AI.Investment.Application.Companies.SearchCompanies;
 using AI.Investment.Application.Freshness;
 using AI.Investment.Application.Ingestion;
 using AI.Investment.Application.Normalization;
+using AI.Investment.Application.Operations;
 using AI.Investment.Application.Retention;
 using AI.Investment.Application.Sources.ActivateSource;
 using AI.Investment.Application.Sources.RegisterKnownSources;
@@ -59,6 +61,23 @@ public static class DependencyInjection
         // payload under normalization.no-normalizer@1 rather than failing to start, which keeps
         // "we cannot read this source yet" a recorded fact instead of a dead host.
         services.AddScoped<INormalizationPipeline, NormalizationPipeline>();
+
+        // ---- Continuous operation. Phase 6. -------------------------------------------------
+        //
+        // All scoped, because each participates in one unit of work: a cycle's progress, the
+        // escalation it raised and the message announcing it commit together or not at all.
+        //
+        // Notably absent is any registration of a cycle work plan. Phase 6 builds the loop and
+        // ships no analytical plan for it to run: a template with none registered escalates and
+        // suspends rather than quietly doing nothing.
+        services.AddScoped<EscalationService>();
+        services.AddScoped<ShadowRecorder>();
+        services.AddScoped<TriggerEvaluator>();
+        services.AddScoped<OperatingCycleRunner>();
+
+        // Issuing, withdrawing and automatically lowering grants. Every method proposes an action
+        // under AutonomyAdministration, which an AI proposer is refused structurally.
+        services.AddScoped<AutonomyAdministration>();
 
         services.AddScoped<RegisterKnownSourcesHandler>();
         services.AddScoped<ActivateSourceHandler>();

@@ -9,7 +9,7 @@ using Microsoft.Extensions.Options;
 namespace AI.Investment.Infrastructure.Policy;
 
 /// <summary>
-/// Builds the policy context from configuration and the environment. Fails closed.
+/// Builds the policy context from configuration, the environment and the autonomy in force. Fails closed.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -18,25 +18,36 @@ namespace AI.Investment.Infrastructure.Policy;
 /// continue past. A system that cannot determine whether it is allowed to act must not act.
 /// </para>
 /// <para>
-/// Configuration is the Phase 1 source of policy, deliberately not the long-term one. Autonomy
-/// grants become database records with expiry, measured quality metrics and automatic demotion.
-/// Because the policy engine consumes a <see cref="PolicyContext"/> rather than reading
-/// configuration itself, that change replaces this one class and nothing else.
+/// Configuration is the Phase 1 source of capability policy, deliberately not the long-term one.
+/// Autonomy grants arrived in Phase 6 as database records with expiry and automatic demotion, and
+/// they are attached here: the resolution the cycle runner put in scope travels into the context, so
+/// the policy engine sees it as one more input rather than reaching for a store of its own. Because
+/// the engine consumes a <see cref="PolicyContext"/> rather than reading anything itself, that
+/// change touched this one class.
+/// </para>
+/// <para>
+/// A null resolution means the action is attended, and the engine reads it that way. The hole that
+/// would otherwise open - unattended work arriving with nothing attached and being treated as
+/// attended - is closed in the engine itself, which refuses any proposal carrying a cycle identifier
+/// that reaches it without a resolution.
 /// </para>
 /// </remarks>
 public sealed partial class ConfiguredPolicyContextProvider : IPolicyContextProvider
 {
     private readonly IOptionsMonitor<SafetyOptions> _options;
     private readonly IHostEnvironment _environment;
+    private readonly IAutonomyContext _autonomy;
     private readonly ILogger<ConfiguredPolicyContextProvider> _logger;
 
     public ConfiguredPolicyContextProvider(
         IOptionsMonitor<SafetyOptions> options,
         IHostEnvironment environment,
+        IAutonomyContext autonomy,
         ILogger<ConfiguredPolicyContextProvider> logger)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
         _environment = environment ?? throw new ArgumentNullException(nameof(environment));
+        _autonomy = autonomy ?? throw new ArgumentNullException(nameof(autonomy));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -81,7 +92,8 @@ public sealed partial class ConfiguredPolicyContextProvider : IPolicyContextProv
             LogNoCapabilitiesConfigured(environmentName);
         }
 
-        return Task.FromResult(PolicyContext.Create(environmentName, killSwitch, capabilities));
+        return Task.FromResult(
+            PolicyContext.Create(environmentName, killSwitch, capabilities, _autonomy.Current));
     }
 
     /// <summary>

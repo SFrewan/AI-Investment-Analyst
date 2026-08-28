@@ -14,7 +14,16 @@
       "**/Approvals/ApprovalToken.cs",
       "**/Approvals/ActionFingerprint.cs",
       "**/Capital/CapitalLedger.cs",
-      "**/Capital/LedgerEntry.cs"
+      "**/Capital/LedgerEntry.cs",
+      "**/Autonomy/AutonomyResolver.cs",
+      "**/Autonomy/AutonomyGrant.cs",
+      "**/Operations/OperatingCycle.cs",
+      "**/Operations/CycleBudget.cs",
+      "**/Operations/AdmissionControl.cs",
+      "**/Operations/EscalationPolicy.cs",
+      "**/Watching/Watch.cs",
+      "**/Watching/TriggerCondition.cs",
+      "**/Shadow/ShadowEvaluation.cs"
     ],
     "reporters": [ "json", "cleartext", "progress" ],
     "thresholds": { "high": 90, "low": 80, "break": 70 },

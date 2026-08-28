@@ -1,3 +1,4 @@
+using AI.Investment.Domain.Autonomy;
 using AI.Investment.Domain.Enums;
 using AI.Investment.Domain.Exceptions;
 
@@ -18,6 +19,14 @@ namespace AI.Investment.Domain.Actions;
 /// the kill switch <see cref="KillSwitchState.Unknown"/> and defines no capabilities, so every
 /// proposal is denied. A system that cannot tell whether it is allowed to act must not act.
 /// </para>
+/// <para>
+/// <see cref="Autonomy"/> arrived with continuous operation and is deliberately nullable. Null does
+/// not mean "no autonomy" - it means <em>the autonomy dimension does not apply</em>, because a human
+/// or an HTTP request initiated this action and there is by definition somebody there. A cycle-driven
+/// proposal is the opposite case, and the engine refuses one that reaches it with no resolution
+/// attached: see <see cref="PolicyEngine.AutonomyResolvedPolicy"/>. That rule is what stops "null
+/// means attended" being a hole an unattended path could fall through.
+/// </para>
 /// </remarks>
 public sealed class PolicyContext
 {
@@ -28,11 +37,13 @@ public sealed class PolicyContext
     private PolicyContext(
         string environmentName,
         KillSwitchState killSwitch,
-        Dictionary<Capability, CapabilityPolicy> capabilities)
+        Dictionary<Capability, CapabilityPolicy> capabilities,
+        AutonomyResolution? autonomy)
     {
         EnvironmentName = environmentName;
         KillSwitch = killSwitch;
         _capabilities = capabilities;
+        Autonomy = autonomy;
     }
 
     /// <summary>
@@ -46,10 +57,17 @@ public sealed class PolicyContext
 
     public IReadOnlyDictionary<Capability, CapabilityPolicy> Capabilities => _capabilities;
 
+    /// <summary>
+    /// The resolved autonomy for this action, when it is being taken unattended. Null when a human
+    /// or a request initiated it.
+    /// </summary>
+    public AutonomyResolution? Autonomy { get; }
+
     public static PolicyContext Create(
         string environmentName,
         KillSwitchState killSwitch,
-        IEnumerable<CapabilityPolicy> capabilities)
+        IEnumerable<CapabilityPolicy> capabilities,
+        AutonomyResolution? autonomy = null)
     {
         if (string.IsNullOrWhiteSpace(environmentName))
         {
@@ -81,7 +99,7 @@ public sealed class PolicyContext
             map[policy.Capability] = policy;
         }
 
-        return new PolicyContext(trimmed, killSwitch, map);
+        return new PolicyContext(trimmed, killSwitch, map, autonomy);
     }
 
     /// <summary>

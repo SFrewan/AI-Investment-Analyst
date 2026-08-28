@@ -318,6 +318,81 @@ public sealed class AuditRecord
             riskTier: null);
     }
 
+    /// <summary>
+    /// Records something the operating loop did: a cycle starting or stopping, a watch firing, an
+    /// escalation, a grant changing, a shadow measurement, a queued message delivered.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One factory rather than a dozen, because these events share a shape: they are things the
+    /// platform did to itself while nobody was watching, and the question asked of them afterwards
+    /// is always "what happened, to what, and when". The three action identifiers stay null - a
+    /// cycle is not a proposal - and the cycle identifier travels in <see cref="Details"/> under a
+    /// stable key so a whole cycle can be reconstructed from the trail.
+    /// </para>
+    /// <para>
+    /// Unattended operation is exactly the condition under which an audit trail stops being a
+    /// nicety. When something goes wrong overnight, this is the only account of it that exists.
+    /// </para>
+    /// </remarks>
+    public static AuditRecord ForOperation(
+        CorrelationId correlationId,
+        AuditEventType eventType,
+        string actor,
+        string summary,
+        DateTime nowUtc,
+        Guid? cycleId = null,
+        Capability? capability = null,
+        IEnumerable<KeyValuePair<string, string>>? details = null)
+    {
+        ArgumentNullException.ThrowIfNull(correlationId);
+        DateRange.EnsureUtc(nowUtc, nameof(nowUtc));
+
+        if (string.IsNullOrWhiteSpace(actor))
+        {
+            throw new DomainValidationException(
+                nameof(actor),
+                "An operation record must name what did it. 'Something happened' is not an audit trail.");
+        }
+
+        var payload = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        if (cycleId is not null)
+        {
+            payload["cycle.id"] = cycleId.Value.ToString("d", CultureInfo.InvariantCulture);
+        }
+
+        if (details is not null)
+        {
+            foreach (var entry in details)
+            {
+                if (string.IsNullOrWhiteSpace(entry.Key))
+                {
+                    continue;
+                }
+
+                payload[entry.Key] = entry.Value ?? string.Empty;
+            }
+        }
+
+        return new AuditRecord(
+            Guid.NewGuid(),
+            correlationId,
+            nowUtc,
+            eventType,
+            actor.Trim(),
+            ProposerKind.DeterministicService,
+            Trim(summary),
+            payload,
+            proposalId: null,
+            decisionId: null,
+            executionId: null,
+            capability: capability,
+            actionType: null,
+            outcome: null,
+            riskTier: null);
+    }
+
     private static string Number(int value) => value.ToString(CultureInfo.InvariantCulture);
 
     private static Dictionary<string, string> BaseDetails(ActionProposal proposal)

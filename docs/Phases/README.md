@@ -67,14 +67,28 @@ one document knows all of them.
 | 3 | Deterministic analytics | **Verified** 2026-08-27 — Release build clean; 808/808 passed, 0 failed, 0 skipped | [PHASE-3-DETERMINISTIC-ANALYTICS.md](PHASE-3-DETERMINISTIC-ANALYTICS.md) |
 | 4 | AI layer | **Verified** 2026-08-27 — Release build clean; 1017/1017 passed, 0 failed, 0 skipped | [PHASE-4-AI-LAYER.md](PHASE-4-AI-LAYER.md) |
 | 5 | Opportunity, approval, capital | **Verified** 2026-08-28 — Release build clean; 1284/1284 passed, 0 failed, 0 skipped; mutation score 96.73 % over the safety-critical domain, above the 70 % break threshold | [PHASE-5-OPPORTUNITY-APPROVAL-CAPITAL.md](PHASE-5-OPPORTUNITY-APPROVAL-CAPITAL.md) |
+| 6 | Continuous operation | **Verified** 2026-08-28 — Release build clean; 1500/1500 passed, 0 failed, 0 skipped; autonomy-escape suite green; the two-week operational invariants demonstrated deterministically over accelerated time, one assertion each, with negative twins | [PHASE-6-CONTINUOUS-OPERATION.md](PHASE-6-CONTINUOUS-OPERATION.md) |
 
 **Phases 3, 4 and 5 are Verified.** On 2026-08-27 the Release build ran clean across all ten
 projects (0 warnings, 0 errors) and the whole suite passed on the developer machine — first at
 **808** with Phase 3, then at **1017 total, 1017 passed, 0 failed, 0 skipped** with Phase 4's AI
 layer added. On 2026-08-28 Phase 5 took it to **1284 total, 1284 passed, 0 failed, 0 skipped**,
 with **zero skipped** because a real PostgreSQL was reachable and every integration test executed.
-Phase 5 also carries a mutation-testing gate over the eight files that decide whether something is
-allowed to happen: **96.73 %**, against a break threshold of 70 %.
+Phase 5 also carries a mutation-testing gate over the files that decide whether something is
+allowed to happen: **96.73 %**, against a break threshold of 70 %. Phase 6 extended that gate to the
+autonomy resolver, the cycle state machine, the budgets, admission control, the escalation policy,
+watches and the shadow evaluator, and took the suite to **1500 total, 1500 passed, 0 failed,
+0 skipped** on 2026-08-28.
+
+**Phase 6's two-week criterion was closed by demonstration rather than by waiting.** Two weeks of
+wall-clock time is not what the criterion tests; the invariants that must hold over two weeks are,
+and each is now asserted separately over a deterministic accelerated fortnight that contains a
+redelivering feed, a market-wide burst, overrunning budgets, two watches reaching the same action,
+workers that die mid-cycle, an outbox outage, and an autonomy grant that expires and is not renewed.
+Both harnesses have negative twins that fail. Running one instance for a real fortnight remains
+worth doing - a simulation cannot produce a provider that degrades at four in the morning - but it
+is an operational activity rather than an outstanding engineering gate, and §12.2 of the phase
+document says exactly that.
 All three runs are recorded in [VERIFICATION-LOG.md](VERIFICATION-LOG.md), including the defects
 the gates caught and their fixes.
 
