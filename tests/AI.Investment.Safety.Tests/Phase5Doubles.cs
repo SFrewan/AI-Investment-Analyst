@@ -10,6 +10,7 @@ using AI.Investment.Domain.Common;
 using AI.Investment.Domain.Enums;
 using AI.Investment.Domain.Limits;
 using AI.Investment.Domain.Opportunities;
+using AI.Investment.Domain.Portfolio;
 using AI.Investment.Domain.ValueObjects;
 
 namespace AI.Investment.Safety.Tests;
@@ -290,6 +291,7 @@ internal sealed class ExecutorHarness
         Venue = new RecordingVenue(venueResult);
         Opportunities = new InMemoryOpportunityRepository();
         UnitOfWork = new CountingUnitOfWork();
+        Positions = new InMemoryPositionEventStore();
 
         Gateway = new ActionGateway(
             new PolicyEngine(),
@@ -305,6 +307,7 @@ internal sealed class ExecutorHarness
             Tokens,
             Venue,
             Ledger,
+            Positions,
             new FixedLimitProvider(limits ?? LimitSet.Empty),
             new FixedExposureProvider(
                 exposure ?? ExposureSnapshot.Flat(Currency.Usd, Money.Create(100_000m, Currency.Usd))),
@@ -316,6 +319,9 @@ internal sealed class ExecutorHarness
     }
 
     internal FakeClock Clock { get; }
+
+    /// <summary>What the executor recorded against holdings. Block 3.</summary>
+    internal InMemoryPositionEventStore Positions { get; }
 
     internal RecordingAuditSink Audit { get; }
 
@@ -388,4 +394,43 @@ internal sealed class ApprovalHarness
 internal sealed class FixedCorrelationContext : ICorrelationContext
 {
     public CorrelationId Current { get; } = CorrelationId.Create("safety-tests");
+}
+
+/// <summary>
+/// An in-memory position event store, idempotent on the venue reference.
+/// </summary>
+/// <remarks>
+/// The uniqueness the real store gets from a database constraint, stated here so the executor's
+/// behaviour can be exercised without one. Appending the same venue reference twice writes nothing
+/// the second time and reports it.
+/// </remarks>
+internal sealed class InMemoryPositionEventStore : IPositionEventStore
+{
+    internal List<PositionEvent> Events { get; } = [];
+
+    public Task<bool> AppendAsync(PositionEvent positionEvent, CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(positionEvent);
+
+        if (Events.Exists(e => string.Equals(
+                e.VenueReference,
+                positionEvent.VenueReference,
+                StringComparison.Ordinal)))
+        {
+            return Task.FromResult(false);
+        }
+
+        Events.Add(positionEvent);
+
+        return Task.FromResult(true);
+    }
+
+    public Task<IReadOnlyList<PositionEvent>> ListAsync(CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<PositionEvent>>(Events);
+
+    public Task<IReadOnlyList<PositionEvent>> ListForAsync(
+        string instrument,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<PositionEvent>>(Events
+            .FindAll(e => string.Equals(e.Instrument, instrument, StringComparison.OrdinalIgnoreCase)));
 }

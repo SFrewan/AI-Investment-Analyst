@@ -1,0 +1,55 @@
+@inject LocalizationState Localization
+
+@*
+    Loading, failed, empty and loaded, in one place.
+
+    Every page needs the same four, and getting the distinction between "empty" and "failed" wrong
+    is how a dashboard tells an operator that a platform holds nothing when in fact it could not be
+    reached. Naming the states once keeps that from being decided page by page.
+*@
+@if (Loading)
+{
+    <p class="loading" role="status" aria-live="polite">@Localization["state.loading"]</p>
+}
+else if (Failure is { } failure && failure != ApiFailure.None)
+{
+    <div class="failure" role="alert">
+        <p>@Localization[failure.MessageKey()]</p>
+        @if (OnRetry.HasDelegate)
+        {
+            <button type="button" @onclick="OnRetry">@Localization["state.retry"]</button>
+        }
+    </div>
+}
+else if (IsEmpty)
+{
+    <div class="empty">
+        <p>@Localization[EmptyKey ?? "state.empty"]</p>
+        @if (EmptyWhyKey is not null)
+        {
+            <p class="empty-why">@Localization[EmptyWhyKey]</p>
+        }
+    </div>
+}
+else
+{
+    @ChildContent
+}
+
+@code {
+    [Parameter] public bool Loading { get; set; }
+
+    [Parameter] public ApiFailure? Failure { get; set; }
+
+    [Parameter] public bool IsEmpty { get; set; }
+
+    /// <summary>Localization key for the empty message. Defaults to a generic one.</summary>
+    [Parameter] public string? EmptyKey { get; set; }
+
+    /// <summary>Localization key explaining why it is empty, when the platform can say.</summary>
+    [Parameter] public string? EmptyWhyKey { get; set; }
+
+    [Parameter] public EventCallback OnRetry { get; set; }
+
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

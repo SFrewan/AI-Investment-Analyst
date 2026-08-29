@@ -1,0 +1,139 @@
+@page "/portfolio/{Instrument}"
+@implements IDisposable
+@inject LocalizationState L
+@inject PlatformClient Client
+@inject RefreshState Refresh
+
+<PageTitle>@Instrument · @L["app.name"]</PageTitle>
+
+<h1>@L["portfolio.positionDetail"]: @Instrument</h1>
+
+<p><a href="portfolio">← @L["portfolio.back"]</a></p>
+
+<DataState Loading="@_loading"
+           Failure="@_failure"
+           IsEmpty="@(_position is null && _failure == ApiFailure.None && !_loading)"
+           EmptyKey="portfolio.empty"
+           OnRetry="@(() => Refresh.RequestAsync())">
+
+    @if (_position is { } position)
+    {
+        <div class="tiles">
+            <Tile Label="@L["portfolio.quantity"]" Value="@L.Number(position.Quantity, 4)" />
+            <Tile Label="@L["portfolio.averageCost"]" Value="@Cell(position.AverageCost)" />
+            <Tile Label="@L["portfolio.costBasis"]" Value="@L.Money(position.CostBasis, _currency)" />
+            <Tile Label="@L["portfolio.currentPrice"]"
+                  Value="@Cell(position.CurrentPrice)"
+                  UnknownKey="valuation.NoObservedPrice" />
+            <Tile Label="@L["portfolio.marketValue"]"
+                  Value="@Cell(position.MarketValue)"
+                  UnknownKey="valuation.NoObservedPrice" />
+            <Tile Label="@L["overview.unrealised"]"
+                  Value="@Cell(position.UnrealisedPnL)"
+                  Tone="@Tone(position.UnrealisedPnL)"
+                  UnknownKey="valuation.NoObservedPrice" />
+            <Tile Label="@L["overview.realised"]"
+                  Value="@L.Money(position.RealisedPnL, _currency)"
+                  Tone="@Tone(position.RealisedPnL)" />
+            <Tile Label="@L["portfolio.exposure"]" Value="@L.Money(position.Exposure, _currency)" />
+        </div>
+
+        @*
+            The provenance the platform actually exposes for a valuation: which session the price
+            closed, and when the source published it. Ingestion time is not shown as a publication
+            time anywhere, because it is not one.
+        *@
+        <section class="panel">
+            <div class="panel-head"><h2>@L["opportunities.evidence"]</h2></div>
+
+            <dl class="tiles">
+                <div class="tile">
+                    <div class="tile-label">@L["portfolio.valuation"]</div>
+                    <div class="tile-value small">
+                        <span class="chip @ValuationClass(position.PriceAvailability)">
+                            @L.Label("valuation", position.PriceAvailability)
+                        </span>
+                    </div>
+                </div>
+
+                <div class="tile">
+                    <div class="tile-label">@L["market.marketDate"]</div>
+                    <div class="tile-value small">@L.Instant(position.PriceAsOfUtc)</div>
+                </div>
+
+                <div class="tile">
+                    <div class="tile-label">@L["market.publishedAt"]</div>
+                    <div class="tile-value small">@L.Instant(position.PricePublishedAtUtc)</div>
+                </div>
+            </dl>
+
+            <p class="panel-note">@L["market.timestampNote"]</p>
+        </section>
+    }
+</DataState>
+
+@code {
+    [Parameter] public string Instrument { get; set; } = string.Empty;
+
+    private PositionDto? _position;
+    private string _currency = string.Empty;
+    private ApiFailure? _failure;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Refresh.Requested += LoadAsync;
+        L.Changed += OnChanged;
+
+        await LoadAsync();
+    }
+
+    /// <summary>Re-reads when the route's instrument changes rather than keeping the first one.</summary>
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+
+        await InvokeAsync(StateHasChanged);
+
+        // The platform has no per-instrument endpoint, and inventing one in the client would mean
+        // a second definition of what a position is. The portfolio is read and the row selected.
+        var result = await Client.GetAsync<PortfolioDto>("api/portfolio");
+
+        _failure = result.Failure;
+        _currency = result.Value?.Currency ?? string.Empty;
+
+        _position = result.Value?.Positions
+            .FirstOrDefault(p => string.Equals(p.Instrument, Instrument, StringComparison.OrdinalIgnoreCase));
+
+        _loading = false;
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private string Cell(decimal? value) =>
+        value is null ? L["state.notApplicable"] : L.Money(value, _currency);
+
+    private string Tone(decimal? value) => value switch
+    {
+        > 0 => "positive",
+        < 0 => "negative",
+        _ => string.Empty,
+    };
+
+    private static string ValuationClass(string availability) => availability switch
+    {
+        "Available" => "ok",
+        "NoObservedPrice" => "warn",
+        _ => "idle",
+    };
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Refresh.Requested -= LoadAsync;
+        L.Changed -= OnChanged;
+    }
+}

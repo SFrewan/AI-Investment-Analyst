@@ -1,0 +1,40 @@
+@inject LocalizationState Localization
+
+@*
+    One figure.
+
+    <see cref="Value"/> being null is not a zero and is not styled like one: it renders the
+    unavailable label in the muted, smaller treatment, so an operator can tell at a glance which
+    tiles the platform actually knows.
+*@
+<div class="tile">
+    <div class="tile-label">@Label</div>
+    @if (Value is null)
+    {
+        <div class="tile-value unknown">@Localization[UnknownKey]</div>
+    }
+    else
+    {
+        <div class="tile-value @Tone @(Small ? "small" : string.Empty)">@Value</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(Note))
+    {
+        <div class="tile-note">@Note</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = string.Empty;
+
+    /// <summary>The formatted figure, or null when the platform does not know it.</summary>
+    [Parameter] public string? Value { get; set; }
+
+    [Parameter] public string? Note { get; set; }
+
+    [Parameter] public string Tone { get; set; } = string.Empty;
+
+    [Parameter] public bool Small { get; set; }
+
+    /// <summary>Which absence this is. Defaults to "unavailable".</summary>
+    [Parameter] public string UnknownKey { get; set; } = "state.unavailable";
+}

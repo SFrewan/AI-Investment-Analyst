@@ -1,0 +1,77 @@
+@implements IDisposable
+@inject LocalizationState Localization
+@inject IJSRuntime Js
+
+@*
+    Switching language changes the document's lang and dir, so the browser hyphenates, selects and
+    scrolls as that language should - which a CSS class alone would not do.
+*@
+<label class="visually-hidden" for="language">@Localization["shell.language"]</label>
+<select id="language"
+        aria-label="@Localization["shell.language"]"
+        @onchange="OnChanged">
+    @foreach (var language in Language.All)
+    {
+        <option value="@language.Code" selected="@(language.Code == Localization.Current.Code)">
+            @language.NativeName
+        </option>
+    }
+</select>
+
+@code {
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+        {
+            return;
+        }
+
+        // The stored preference first, then what the browser asks for, then English.
+        var stored = await Read("dashboardShell.readLanguage");
+        var chosen = stored ?? await Read("dashboardShell.browserLanguage");
+
+        await ApplyAsync(Language.FromCode(chosen), persist: stored is not null);
+    }
+
+    private async Task OnChanged(ChangeEventArgs args) =>
+        await ApplyAsync(Language.FromCode(args.Value?.ToString()), persist: true);
+
+    private async Task ApplyAsync(Language language, bool persist)
+    {
+        Localization.Set(language);
+
+        try
+        {
+            await Js.InvokeVoidAsync(
+                "dashboardShell.setDocumentLanguage",
+                language.Code,
+                language.Direction);
+
+            if (persist)
+            {
+                await Js.InvokeVoidAsync("dashboardShell.writeLanguage", language.Code);
+            }
+        }
+        catch (JSException)
+        {
+            // The document keeps the direction it had. The application is still usable in the
+            // chosen language; it is the browser's own text handling that will not follow.
+        }
+    }
+
+    private async Task<string?> Read(string function)
+    {
+        try
+        {
+            return await Js.InvokeAsync<string?>(function);
+        }
+        catch (JSException)
+        {
+            return null;
+        }
+    }
+
+    public void Dispose()
+    {
+    }
+}

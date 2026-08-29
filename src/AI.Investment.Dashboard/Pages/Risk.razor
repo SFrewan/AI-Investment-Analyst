@@ -1,0 +1,107 @@
+@page "/risk"
+@implements IDisposable
+@inject LocalizationState L
+@inject PlatformClient Client
+@inject RefreshState Refresh
+
+<PageTitle>@L["risk.title"] · @L["app.name"]</PageTitle>
+
+<h1>@L["risk.title"]</h1>
+
+@*
+    Read-only, deliberately. The kill switch is engaged through the operator console, which routes
+    it through the action gateway and audits it under a person's name; there is no disengage
+    control anywhere, here or there.
+*@
+<div class="banner" role="note"><span>@L["risk.exposureNote"]</span></div>
+
+<section class="panel">
+    <div class="panel-head"><h2>@L["risk.exposureByInstrument"]</h2></div>
+
+    <DataState Loading="@_loading"
+               Failure="@_failure"
+               IsEmpty="@(_open.Count == 0)"
+               EmptyKey="risk.empty"
+               OnRetry="@(() => Refresh.RequestAsync())">
+
+        <ExposureChart Positions="@_open" Currency="@(_portfolio?.Currency ?? string.Empty)" />
+
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">@L["portfolio.instrument"]</th>
+                        <th scope="col" class="num">@L["portfolio.exposure"]</th>
+                        <th scope="col" class="num">@L["risk.limit"]</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var position in _open.OrderByDescending(p => p.Exposure))
+                    {
+                        <tr>
+                            <td>@position.Instrument</td>
+                            <td class="num">@L.Money(position.Exposure, _portfolio!.Currency)</td>
+                            <td class="num">@Concentration(position)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </DataState>
+</section>
+
+@code {
+    private PortfolioDto? _portfolio;
+    private IReadOnlyList<PositionDto> _open = [];
+    private ApiFailure? _failure;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Refresh.Requested += LoadAsync;
+        L.Changed += OnChanged;
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+
+        await InvokeAsync(StateHasChanged);
+
+        var result = await Client.GetAsync<PortfolioDto>("api/portfolio");
+
+        _portfolio = result.Value;
+        _failure = result.Failure;
+        _open = result.Value?.Positions.Where(p => p.IsOpen).ToList() ?? [];
+        _loading = false;
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    /// <summary>
+    /// This instrument's share of total exposure, at cost.
+    /// </summary>
+    /// <remarks>
+    /// A ratio of two figures the platform supplied, not a risk model: the limit engine's own
+    /// concentration ceiling lives in the backend and is applied there. Showing the share is how an
+    /// operator sees what that ceiling will be compared against.
+    /// </remarks>
+    private string Concentration(PositionDto position)
+    {
+        var total = _open.Sum(p => p.Exposure);
+
+        return total == 0m
+            ? L["state.notApplicable"]
+            : L.Number(position.Exposure / total * 100m, 1) + "%";
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Refresh.Requested -= LoadAsync;
+        L.Changed -= OnChanged;
+    }
+}

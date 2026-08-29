@@ -26,6 +26,7 @@ public sealed class BoundedAutonomyTests
     private readonly InMemoryAutonomyGrantStore _grants = new();
     private readonly InMemoryPromotionWarrantStore _warrants = new();
     private readonly InMemoryEscalationStore _escalations = new();
+    private readonly ScriptedAuditStatistics _incidents = new();
     private readonly RecordingAuditSink _audit = new();
     private readonly FakeClock _clock = new(Now);
     private readonly TestWriteAuthorization _writes = new();
@@ -140,8 +141,9 @@ public sealed class BoundedAutonomyTests
     // ---- the circuit breaker -------------------------------------------------------------------------
 
     /// <summary>
-    /// Fail closed. Signals nobody counts arrive as unknown, and unknown lowers the grant rather than
-    /// leaving it - which is why an unattended grant does not survive a sweep on this platform today.
+    /// Fail closed. A signal that cannot be read arrives as unknown, and unknown lowers the grant
+    /// rather than leaving it. The store throwing is the case this exists for: the moments when a
+    /// query fails are the moments the platform should be doing less.
     /// </summary>
     [Fact]
     public async Task An_unattended_grant_is_demoted_when_the_signals_cannot_be_read()
@@ -150,6 +152,8 @@ public sealed class BoundedAutonomyTests
 
         _warrants.Seed(warrant);
         _grants.Seed(Bounded(warrant));
+
+        _incidents.Fail = true;
 
         var sweep = await Breaker(KillSwitchState.Disengaged).SweepAsync();
 
@@ -161,6 +165,97 @@ public sealed class BoundedAutonomyTests
         // And the record says what was permitted as well as what is now in force.
         Assert.Equal(AutonomyMode.AutoExecuteBounded, _grants.All[0].GrantedMode);
         Assert.Equal(1, _audit.CountOf(AuditEventType.AutonomyDemoted));
+    }
+
+    /// <summary>
+    /// The signals are counted now, so a grant whose capability has behaved survives a sweep.
+    /// </summary>
+    /// <remarks>
+    /// This is the behaviour the counting mechanism was added for, and it could not be asserted
+    /// before it existed: with breaches and failures reported as unknown, every unattended grant
+    /// demoted on its first sweep whatever had actually happened. A breaker that lowers everything
+    /// unconditionally is indistinguishable from one that is broken.
+    /// </remarks>
+    [Fact]
+    public async Task An_unattended_grant_whose_capability_has_behaved_survives_a_sweep()
+    {
+        var warrant = JustifiedEvidence.Warrant();
+
+        _warrants.Seed(warrant);
+        _grants.Seed(Bounded(warrant));
+
+        var sweep = await Breaker(KillSwitchState.Disengaged).SweepAsync();
+
+        Assert.Equal(1, sweep.Examined);
+        Assert.Equal(0, sweep.Demoted);
+        Assert.Empty(sweep.Triggers);
+        Assert.Equal(AutonomyMode.AutoExecuteBounded, _grants.All[0].EffectiveMode);
+    }
+
+    /// <summary>One policy denial is one more than the evidence for promotion accounted for.</summary>
+    [Fact]
+    public async Task A_single_policy_breach_lowers_the_grant()
+    {
+        var warrant = JustifiedEvidence.Warrant();
+
+        _warrants.Seed(warrant);
+        _grants.Seed(Bounded(warrant));
+
+        _incidents.PolicyBreaches = 1;
+
+        var sweep = await Breaker(KillSwitchState.Disengaged).SweepAsync();
+
+        Assert.Equal(DemotionTrigger.PolicyBreach, Assert.Single(sweep.Triggers));
+        Assert.Equal(AutonomyMode.PrepareForApproval, _grants.All[0].EffectiveMode);
+    }
+
+    /// <summary>Failures are tolerated up to the threshold and not past it.</summary>
+    [Theory]
+    [InlineData(2, false)]
+    [InlineData(3, true)]
+    public async Task Execution_failures_lower_the_grant_only_past_the_threshold(
+        int failures,
+        bool expectDemotion)
+    {
+        var warrant = JustifiedEvidence.Warrant();
+
+        _warrants.Seed(warrant);
+        _grants.Seed(Bounded(warrant));
+
+        _incidents.ExecutionFailures = failures;
+
+        var sweep = await Breaker(KillSwitchState.Disengaged).SweepAsync();
+
+        Assert.Equal(expectDemotion ? 1 : 0, sweep.Demoted);
+
+        if (expectDemotion)
+        {
+            Assert.Equal(DemotionTrigger.ExecutionFailures, Assert.Single(sweep.Triggers));
+        }
+    }
+
+    /// <summary>
+    /// The counts are asked for per capability and over the grant's own lifetime, which is what
+    /// makes them evidence about this grant rather than about the installation.
+    /// </summary>
+    [Fact]
+    public async Task The_counts_are_asked_for_per_capability_and_since_the_grant_was_issued()
+    {
+        var warrant = JustifiedEvidence.Warrant();
+
+        _warrants.Seed(warrant);
+
+        var grant = Bounded(warrant);
+
+        _grants.Seed(grant);
+
+        await Breaker(KillSwitchState.Disengaged).SweepAsync();
+
+        var asked = Assert.Single(_incidents.Questions);
+
+        Assert.Equal(grant.Capability, asked.Capability);
+        Assert.Equal(grant.GrantedAtUtc, asked.SinceUtc);
+        Assert.Equal(Now, asked.NowUtc);
     }
 
     /// <summary>
@@ -227,7 +322,8 @@ public sealed class BoundedAutonomyTests
     // ---- helpers -------------------------------------------------------------------------------------
 
     private AutonomyCircuitBreaker Breaker(KillSwitchState state) =>
-        new(_grants, _warrants, _escalations, new FixedKillSwitch(state), Administration(), _clock);
+        new(_grants, _warrants, _escalations, _incidents, new FixedKillSwitch(state),
+            Administration(), _clock);
 
     private static AutonomyGrant Bounded(PromotionWarrant warrant) =>
         AutonomyGrant.IssueBounded(
@@ -307,5 +403,39 @@ internal sealed class NoOpUnitOfWork : IUnitOfWork
         SaveCount++;
 
         return Task.FromResult(0);
+    }
+}
+
+/// <summary>An incident count a test can script, including into failure.</summary>
+/// <remarks>
+/// It records what it was asked as well as what it answered. The window and the capability are the
+/// substantive part of the design - a count over the wrong capability or the wrong period is a
+/// number about something else - and only the recorded question can assert them.
+/// </remarks>
+internal sealed class ScriptedAuditStatistics : IAuditStatistics
+{
+    private readonly List<(Capability Capability, DateTime SinceUtc, DateTime NowUtc)> _questions = [];
+
+    public int PolicyBreaches { get; set; }
+
+    public int ExecutionFailures { get; set; }
+
+    /// <summary>When true, the store cannot answer - which must read as unknown, not as zero.</summary>
+    public bool Fail { get; set; }
+
+    public IReadOnlyList<(Capability Capability, DateTime SinceUtc, DateTime NowUtc)> Questions =>
+        _questions;
+
+    public Task<CapabilityIncidents> CountIncidentsAsync(
+        Capability capability,
+        DateTime sinceUtc,
+        DateTime nowUtc,
+        CancellationToken cancellationToken = default)
+    {
+        _questions.Add((capability, sinceUtc, nowUtc));
+
+        return Fail
+            ? throw new InvalidOperationException("the audit trail could not be read.")
+            : Task.FromResult(new CapabilityIncidents(PolicyBreaches, ExecutionFailures));
     }
 }

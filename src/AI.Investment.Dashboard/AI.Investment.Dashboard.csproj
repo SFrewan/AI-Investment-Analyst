@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+
+  <PropertyGroup>
+    <RootNamespace>AI.Investment.Dashboard</RootNamespace>
+    <AssemblyName>AI.Investment.Dashboard</AssemblyName>
+
+    <!--
+      Overridden for this project alone, and deliberately.
+
+      Directory.Build.props sets InvariantGlobalization=true solution-wide, which is right for a
+      server whose output is machine-read: it keeps formatting from depending on a host's locale.
+      This project's output is read by a person, in one of two languages, and Arabic is a
+      first-class UI here rather than English with translated strings. Under invariant
+      globalization every culture collapses to the same formatting, so Arabic dates and numbers
+      would silently render as English ones - which is exactly the failure this block exists to
+      avoid. The override is scoped to the one project that renders text for humans.
+    -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+
+    <!--
+      Only the two cultures this product supports are carried into the output, so the globalization
+      data does not grow to every locale ICU knows about.
+    -->
+    <BlazorWebAssemblyLoadAllGlobalizationData>false</BlazorWebAssemblyLoadAllGlobalizationData>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="AI.Investment.Dashboard.Tests" />
+  </ItemGroup>
+
+</Project>

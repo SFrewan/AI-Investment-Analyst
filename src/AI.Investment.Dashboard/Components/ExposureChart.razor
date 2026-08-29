@@ -1,0 +1,69 @@
+@inject LocalizationState L
+
+@*
+    Exposure by instrument, as inline SVG.
+
+    Hand-drawn rather than pulled from a charting library, and deliberately: the only time series
+    this platform holds today is a price history that does not exist until the observation window
+    is activated, so a library would be a dependency bought for one bar chart. The plot group
+    carries the "plot" class, which the stylesheet mirrors under RTL so the bars grow in the
+    direction the text reads, while the labels - which are real text - do not mirror.
+
+    An empty dataset renders nothing rather than an empty axis; the caller shows the empty state.
+*@
+@if (Positions.Count > 0)
+{
+    <figure>
+        <svg class="chart"
+             viewBox="0 0 100 @Height"
+             preserveAspectRatio="none"
+             role="img"
+             aria-label="@Summary">
+            <g class="plot">
+                @{
+                    var maximum = Positions.Max(p => p.Exposure);
+                    var index = 0;
+                }
+                @foreach (var position in Positions.OrderByDescending(p => p.Exposure))
+                {
+                    var width = maximum == 0m ? 0d : (double)(position.Exposure / maximum) * 96d;
+                    var y = (index * (BarHeight + BarGap)) + BarGap;
+
+                    <rect x="0"
+                          y="@y.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                          width="@width.ToString(System.Globalization.CultureInfo.InvariantCulture)"
+                          height="@BarHeight"
+                          fill="var(--accent)"
+                          rx="0.6" />
+
+                    index++;
+                }
+            </g>
+        </svg>
+
+        @* The accessible equivalent: the same numbers as text, for anyone the picture does not serve. *@
+        <figcaption class="chart-caption">@Summary</figcaption>
+    </figure>
+}
+
+@code {
+    private const double BarHeight = 4d;
+    private const double BarGap = 1.5d;
+
+    [Parameter] public IReadOnlyList<PositionDto> Positions { get; set; } = [];
+
+    [Parameter] public string Currency { get; set; } = string.Empty;
+
+    private double Height => Math.Max(1, Positions.Count) * (BarHeight + BarGap) + BarGap;
+
+    /// <summary>
+    /// The chart in words. It is the <c>aria-label</c> and the visible caption, so the figures are
+    /// available whether or not the SVG is.
+    /// </summary>
+    private string Summary =>
+        string.Join(
+            " · ",
+            Positions
+                .OrderByDescending(p => p.Exposure)
+                .Select(p => $"{p.Instrument} {L.Money(p.Exposure, Currency)}"));
+}

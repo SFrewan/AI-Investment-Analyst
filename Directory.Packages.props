@@ -97,6 +97,19 @@
     <!-- In-process host for API contract tests. -->
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="8.0.10" />
 
+    <!--
+      Block 4: the operator dashboard. Blazor WebAssembly rather than a JavaScript framework, and
+      not for preference: the build machine has no Node and no npm, so a React or Vue application
+      could not be built or tested here at all. This is the frontend stack the environment can
+      actually verify, and it builds and tests through the same dotnet commands as everything else.
+      bUnit renders components in a test host so the sign-in flow, the localization and the
+      unknown-value rendering are asserted rather than described.
+    -->
+    <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly" Version="8.0.10" />
+    <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="8.0.10" />
+    <PackageVersion Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="8.0.10" />
+    <PackageVersion Include="bunit" Version="1.34.0" />
+
     <!-- Real PostgreSQL in a container for integration tests: real migrations, real SQL,
          real constraint violations. An in-memory provider proves none of those. -->
     <PackageVersion Include="Testcontainers.PostgreSql" Version="3.10.0" />

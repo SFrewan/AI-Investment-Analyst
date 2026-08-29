@@ -1,0 +1,123 @@
+@page "/opportunities/{Id:guid}"
+@implements IDisposable
+@inject LocalizationState L
+@inject PlatformClient Client
+@inject RefreshState Refresh
+
+<PageTitle>@L["opportunities.detail"] · @L["app.name"]</PageTitle>
+
+<h1>@L["opportunities.detail"]</h1>
+
+<p><a href="opportunities">← @L["opportunities.title"]</a></p>
+
+<DataState Loading="@_loading" Failure="@_failure" OnRetry="@(() => Refresh.RequestAsync())">
+    @if (_opportunity is { } opportunity)
+    {
+        <section class="panel">
+            <div class="panel-head"><h2>@opportunity.Title</h2></div>
+            <p>@opportunity.Description</p>
+
+            <div class="tiles">
+                <Tile Label="@L["opportunities.status"]" Value="@opportunity.Status" Small="true" />
+                <Tile Label="@L["portfolio.instrument"]"
+                      Value="@opportunity.SubjectIdentifier"
+                      Small="true" />
+                <Tile Label="@L["opportunities.score"]"
+                      Value="@(opportunity.Score is { } s ? L.Number(s.Value, 3) : null)"
+                      Small="true"
+                      UnknownKey="state.notMeasured" />
+                <Tile Label="@L["opportunities.created"]"
+                      Value="@L.Instant(opportunity.DiscoveredAtUtc)"
+                      Small="true" />
+            </div>
+        </section>
+
+        @if (opportunity.Economics is { } economics)
+        {
+            <section class="panel">
+                <div class="panel-head"><h2>@L["capital.amount"]</h2></div>
+                <div class="tiles">
+                    <Tile Label="@L["capital.balance"]"
+                          Value="@L.Money(economics.RequiredCapital, economics.Currency)"
+                          Small="true" />
+                    <Tile Label="@L["overview.unrealised"]"
+                          Value="@L.Money(economics.EstimatedProfit, economics.Currency)"
+                          Small="true"
+                          Tone="@(economics.EstimatedProfit >= 0 ? "positive" : "negative")" />
+                    <Tile Label="@L["validation.calibration"]"
+                          Value="@L.Number(economics.SuccessProbability, 3)"
+                          Small="true" />
+                </div>
+            </section>
+        }
+
+        @if (opportunity.Risk is { } risk)
+        {
+            <section class="panel">
+                <div class="panel-head"><h2>@L["opportunities.risk"]</h2></div>
+                <p>@risk.Summary</p>
+                <ul>
+                    @foreach (var factor in risk.Factors)
+                    {
+                        <li>@factor</li>
+                    }
+                </ul>
+            </section>
+        }
+
+        @*
+            Evidence, as far as the platform exposes it. The list endpoint gives a count of cited
+            observations rather than their identifiers, so the count is what is shown - a client
+            that displayed identifiers it had not been given would be inventing provenance.
+        *@
+        <section class="panel">
+            <div class="panel-head"><h2>@L["opportunities.evidence"]</h2></div>
+            <p>@L.Format("opportunities.evidenceCount", opportunity.EvidenceCount)</p>
+            @if (opportunity.Score is { } scored)
+            {
+                <p class="panel-note">
+                    @scored.Metric · @scored.Version · @L.Instant(scored.AsOfUtc)
+                </p>
+            }
+        </section>
+    }
+</DataState>
+
+@code {
+    [Parameter] public Guid Id { get; set; }
+
+    private OpportunityDto? _opportunity;
+    private ApiFailure? _failure;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Refresh.Requested += LoadAsync;
+        L.Changed += OnChanged;
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+
+        await InvokeAsync(StateHasChanged);
+
+        var result = await Client.GetAsync<OpportunityDto>($"api/opportunities/{Id}");
+
+        _opportunity = result.Value;
+        _failure = result.Failure;
+        _loading = false;
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Refresh.Requested -= LoadAsync;
+        L.Changed -= OnChanged;
+    }
+}

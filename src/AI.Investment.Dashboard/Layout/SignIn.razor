@@ -1,0 +1,123 @@
+@implements IDisposable
+@inject LocalizationState Localization
+@inject OperatorSession Session
+@inject PlatformClient Client
+@inject HttpClient Http
+
+@*
+    The only screen a signed-out operator can reach.
+
+    The key is read from the field, sent once to whoami, and handed to the session if the platform
+    recognises it. It is never written to storage, never put in a URL, and the field is cleared
+    the moment the answer arrives - so it exists in the DOM for exactly as long as it is being typed.
+*@
+<div class="signin">
+    <div class="panel signin-card">
+        <h1>@Localization["signIn.title"]</h1>
+        <p class="signin-intro">@Localization["signIn.intro"]</p>
+
+        <form @onsubmit="SubmitAsync" @onsubmit:preventDefault="true">
+            <label for="operator-key">@Localization["signIn.keyLabel"]</label>
+            <input id="operator-key"
+                   type="password"
+                   autocomplete="off"
+                   spellcheck="false"
+                   aria-describedby="key-hint"
+                   disabled="@_busy"
+                   @bind="_key"
+                   @bind:event="oninput" />
+
+            <p id="key-hint" class="panel-note">@Localization["signIn.keyHint"]</p>
+
+            <button type="submit" class="primary" disabled="@_busy">
+                @(_busy ? Localization["signIn.checking"] : Localization["signIn.submit"])
+            </button>
+        </form>
+
+        @if (_error is not null)
+        {
+            <p class="signin-error" role="alert">@Localization[_error]</p>
+        }
+
+        <div class="signin-lang">
+            <LanguagePicker />
+        </div>
+    </div>
+</div>
+
+@code {
+    private string _key = string.Empty;
+    private bool _busy;
+    private string? _error;
+
+    protected override void OnInitialized() => Localization.Changed += OnChanged;
+
+    private async Task SubmitAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_key))
+        {
+            _error = "signIn.empty";
+
+            return;
+        }
+
+        _busy = true;
+        _error = null;
+
+        var candidate = _key;
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, "api/operator/whoami");
+            request.Headers.TryAddWithoutValidation(OperatorSession.HeaderName, candidate);
+
+            using var response = await Http.SendAsync(request);
+
+            var failure = PlatformClient.Classify(response.StatusCode);
+
+            if (failure == ApiFailure.Unauthorized)
+            {
+                _error = "signIn.rejected";
+
+                return;
+            }
+
+            if (failure != ApiFailure.None)
+            {
+                _error = failure == ApiFailure.Network ? "signIn.unreachable" : "error.server";
+
+                return;
+            }
+
+            var identity = await response.Content
+                .ReadFromJsonAsync<OperatorIdentityDto>();
+
+            if (identity is null)
+            {
+                _error = "error.server";
+
+                return;
+            }
+
+            Session.Establish(candidate, identity);
+        }
+        catch (HttpRequestException)
+        {
+            _error = "signIn.unreachable";
+        }
+        catch (TaskCanceledException)
+        {
+            _error = "signIn.unreachable";
+        }
+        finally
+        {
+            // Whatever happened, the field does not keep the key.
+            _key = string.Empty;
+            _busy = false;
+        }
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose() => Localization.Changed -= OnChanged;
+}

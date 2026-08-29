@@ -1,0 +1,80 @@
+@page "/capital"
+@implements IDisposable
+@inject LocalizationState L
+@inject PlatformClient Client
+@inject RefreshState Refresh
+
+<PageTitle>@L["capital.title"] · @L["app.name"]</PageTitle>
+
+<h1>@L["capital.title"]</h1>
+
+<div class="banner" role="note"><span>@L["capital.ledgerNote"]</span></div>
+
+<DataState Loading="@_loading"
+           Failure="@_failure"
+           IsEmpty="@(_report is { EntryCount: 0 })"
+           EmptyKey="capital.empty"
+           OnRetry="@(() => Refresh.RequestAsync())">
+
+    @if (_report is { } report)
+    {
+        <div class="tiles">
+            @foreach (var balance in report.Balances)
+            {
+                <Tile Label="@balance.Account"
+                      Value="@L.Money(balance.Amount, balance.Currency)"
+                      Note="@balance.Kind" />
+            }
+        </div>
+
+        <section class="panel">
+            <div class="panel-head">
+                <h2>@L["capital.ledger"]</h2>
+                <span class="chip @(report.IsBalanced ? "ok" : "bad")">
+                    @(report.IsBalanced ? L["market.active"] : L["error.title"])
+                </span>
+            </div>
+
+            <p class="panel-note">
+                @L["capital.entries"]: @L.Number(report.EntryCount, 0)
+            </p>
+        </section>
+    }
+</DataState>
+
+@code {
+    private LedgerReportDto? _report;
+    private ApiFailure? _failure;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Refresh.Requested += LoadAsync;
+        L.Changed += OnChanged;
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+
+        await InvokeAsync(StateHasChanged);
+
+        var result = await Client.GetAsync<LedgerReportDto>("api/capital/ledger");
+
+        _report = result.Value;
+        _failure = result.Failure;
+        _loading = false;
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Refresh.Requested -= LoadAsync;
+        L.Changed -= OnChanged;
+    }
+}

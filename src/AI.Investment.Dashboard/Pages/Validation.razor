@@ -1,0 +1,109 @@
+@page "/validation"
+@implements IDisposable
+@inject LocalizationState L
+@inject PlatformClient Client
+@inject RefreshState Refresh
+
+<PageTitle>@L["validation.title"] · @L["app.name"]</PageTitle>
+
+<h1>@L["validation.title"]</h1>
+
+<DataState Loading="@_loading" Failure="@_failure" OnRetry="@(() => Refresh.RequestAsync())">
+    @if (_report is { } report)
+    {
+        @*
+            The distinction this whole page exists to preserve: an unmeasured result is not a failed
+            one. The platform's own verdict and conclusion are shown verbatim rather than
+            reinterpreted, and every figure carries its availability rather than a number.
+        *@
+        <section class="panel">
+            <div class="panel-head">
+                <h2>@report.Verdict</h2>
+                <span class="chip @(Established(report) ? "ok" : "idle")">
+                    @(Established(report) ? L["market.active"] : L["validation.notEstablished"])
+                </span>
+            </div>
+
+            <p>@report.Conclusion</p>
+
+            @if (!Established(report))
+            {
+                <p class="panel-note">@L["validation.notEstablishedWhy"]</p>
+            }
+        </section>
+
+        <div class="tiles">
+            <Tile Label="@L["validation.sampleSize"]"
+                  Value="@L.Number(report.PredictionsAdmitted, 0)"
+                  Note="@($"{L["opportunities.evidence"]}: {L.Number(report.PredictionsConsidered, 0)}")" />
+
+            <MeasurementTile Label="@L["validation.hitRate"]" Measurement="@report.HitRate" />
+            <MeasurementTile Label="@L["validation.calibration"]" Measurement="@report.BrierScore" />
+            <MeasurementTile Label="@L["validation.benchmark"]" Measurement="@report.ExcessReturn" />
+        </div>
+
+        <section class="panel">
+            <div class="panel-head"><h2>@L["validation.benchmark"]</h2></div>
+            <p>@report.BenchmarkName</p>
+            <p class="panel-note">
+                @L.Instant(report.BenchmarkDeclaredAtUtc) · @report.BenchmarkFingerprint
+            </p>
+        </section>
+
+        @if (report.DataGaps.Count > 0)
+        {
+            <section class="panel">
+                <div class="panel-head"><h2>@L["state.noData"]</h2></div>
+                <ul>
+                    @foreach (var gap in report.DataGaps)
+                    {
+                        <li>@gap</li>
+                    }
+                </ul>
+            </section>
+        }
+    }
+</DataState>
+
+@code {
+    private ValidationReportDto? _report;
+    private ApiFailure? _failure;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Refresh.Requested += LoadAsync;
+        L.Changed += OnChanged;
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+
+        await InvokeAsync(StateHasChanged);
+
+        var result = await Client.GetAsync<ValidationReportDto>("api/validation/report");
+
+        _report = result.Value;
+        _failure = result.Failure;
+        _loading = false;
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    /// <summary>
+    /// A result exists only when the platform admitted a prediction. Nothing here infers one from
+    /// a report having been generated.
+    /// </summary>
+    private static bool Established(ValidationReportDto report) => report.PredictionsAdmitted > 0;
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Refresh.Requested -= LoadAsync;
+        L.Changed -= OnChanged;
+    }
+}

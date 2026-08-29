@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Investment Analyst — operator console</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #14171c; --muted: #5b6472;
+    --line: #dfe3e8; --accent: #2a5db0; --ok: #1d7a4c; --warn: #9a6100; --stop: #a32020;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14171c; --panel: #1b1f26; --ink: #e8ebef; --muted: #98a2b3;
+      --line: #2b313b; --accent: #7aa5e8; --ok: #58c48c; --warn: #e0a94b; --stop: #ef7676;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    position: sticky; top: 0; z-index: 5; background: var(--panel);
+    border-bottom: 1px solid var(--line); padding: 12px 20px;
+    display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .01em; }
+  .spacer { flex: 1; }
+  main { padding: 20px; max-width: 1500px; margin: 0 auto; }
+  .banner {
+    display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 18px;
+  }
+  .chip {
+    border: 1px solid var(--line); border-radius: 999px; padding: 5px 12px;
+    background: var(--panel); font-size: 12px; font-weight: 600;
+  }
+  .chip small { font-weight: 400; color: var(--muted); }
+  .chip.ok { border-color: var(--ok); color: var(--ok); }
+  .chip.warn { border-color: var(--warn); color: var(--warn); }
+  .chip.stop { border-color: var(--stop); color: var(--stop); }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(390px, 1fr)); }
+  section {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+    padding: 14px 16px; min-width: 0;
+  }
+  section h2 {
+    font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--muted); margin: 0 0 10px; font-weight: 600;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 5px 8px 5px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .scroll { overflow-x: auto; }
+  .empty { color: var(--muted); font-style: italic; padding: 6px 0; }
+  code, .mono { font-family: var(--mono); font-size: 12px; }
+  button {
+    font: inherit; font-size: 13px; padding: 5px 11px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { border-color: var(--stop); color: var(--stop); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  input, select {
+    font: inherit; font-size: 13px; padding: 5px 8px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink); min-width: 0;
+  }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .row label { font-size: 12px; color: var(--muted); min-width: 92px; }
+  .note { color: var(--muted); font-size: 12px; margin-top: 10px; }
+  #log {
+    font-family: var(--mono); font-size: 12px; max-height: 190px; overflow-y: auto;
+    border-top: 1px solid var(--line); padding-top: 8px; margin-top: 8px;
+  }
+  #log div { padding: 2px 0; border-bottom: 1px dotted var(--line); }
+  .fail { color: var(--stop); }
+  .pass { color: var(--ok); }
+</style>
+</head>
+<body>
+<header>
+  <h1>AI Investment Analyst — operator console</h1>
+  <span class="chip" id="who">not signed in</span>
+  <div class="spacer"></div>
+  <input id="key" type="password" placeholder="operator key" autocomplete="off" size="24">
+  <button class="primary" id="signin">Sign in</button>
+  <button id="signout">Sign out</button>
+  <button id="refresh">Refresh</button>
+</header>
+
+<main>
+  <div class="banner">
+    <span class="chip" id="c-health">health …</span>
+    <span class="chip warn" id="c-autonomy">autonomy L3 — prepare for approval</span>
+    <span class="chip warn" id="c-promotion">promotion …</span>
+    <span class="chip stop">live execution unavailable</span>
+    <span class="chip warn">shadow decisions are measurements — nothing here was executed</span>
+    <span class="chip" id="c-kill">kill switch …</span>
+  </div>
+
+  <div class="grid">
+    <section>
+      <h2>Operations — cycles</h2>
+      <div class="scroll"><table id="t-cycles"></table></div>
+    </section>
+
+    <section>
+      <h2>Escalations awaiting an answer</h2>
+      <div class="scroll"><table id="t-escalations"></table></div>
+      <p class="note">Acknowledging and resolving are recorded against your operator identity.</p>
+    </section>
+
+    <section>
+      <h2>Opportunities</h2>
+      <div class="row">
+        <label for="status">Status</label>
+        <select id="status">
+          <option>Proposed</option><option>Ranked</option><option>Evaluated</option>
+          <option>Draft</option><option>Approved</option><option>Active</option>
+          <option>Rejected</option><option>Expired</option><option>Closed</option>
+        </select>
+        <button id="load-opps">Load</button>
+      </div>
+      <div class="scroll"><table id="t-opportunities"></table></div>
+      <p class="note">
+        Approving is not available here. An approval binds to the exact proposal a person was shown,
+        and proposals are not persisted yet — see the block document.
+      </p>
+    </section>
+
+    <section>
+      <h2>Shadow decisions</h2>
+      <div class="scroll"><table id="t-shadow"></table></div>
+      <p class="note">What a higher autonomy level <em>would</em> have decided. None of it ran.</p>
+    </section>
+
+    <section>
+      <h2>Autonomy grants</h2>
+      <div class="scroll"><table id="t-grants"></table></div>
+    </section>
+
+    <section>
+      <h2>Promotion state</h2>
+      <div id="promotion"></div>
+    </section>
+
+    <section>
+      <h2>Data freshness</h2>
+      <div class="scroll"><table id="t-freshness"></table></div>
+    </section>
+
+    <section>
+      <h2>Ingestion runs</h2>
+      <div class="scroll"><table id="t-runs"></table></div>
+    </section>
+
+    <section>
+      <h2>Capital ledger</h2>
+      <div id="ledger"></div>
+    </section>
+
+    <section>
+      <h2>Validation</h2>
+      <div id="validation"></div>
+    </section>
+
+    <section>
+      <h2>Sources</h2>
+      <div class="scroll"><table id="t-sources"></table></div>
+      <div class="row" style="margin-top:10px">
+        <label for="activate-id">Activate</label>
+        <input id="activate-id" placeholder="source id" size="18">
+        <button id="do-activate">Activate source</button>
+      </div>
+    </section>
+
+    <section>
+      <h2>Point the observation window</h2>
+      <div class="row"><label for="w-name">Name</label><input id="w-name" size="22" placeholder="AAPL price review"></div>
+      <div class="row"><label for="w-kind">Target kind</label><input id="w-kind" size="12" value="Security"></div>
+      <div class="row"><label for="w-id">Instrument</label><input id="w-id" size="10" placeholder="AAPL"></div>
+      <div class="row"><label for="w-interval">Every (min)</label><input id="w-interval" type="number" value="360" min="1"></div>
+      <div class="row"><label for="w-cooldown">Cooldown (min)</label><input id="w-cooldown" type="number" value="60" min="1"></div>
+      <div class="row"><label for="w-capability">Capability</label><input id="w-capability" size="22" value="OpportunityManagement"></div>
+      <div class="row"><label for="w-template">Template</label><input id="w-template" size="22" value="equity-price-review"></div>
+      <button class="primary" id="do-watch">Create scheduled watch</button>
+      <p class="note">
+        A watch is what makes a cycle run. Nothing it produces executes: at L3 a proposal reaches the
+        policy gate and stops.
+      </p>
+    </section>
+
+    <section>
+      <h2>Kill switch</h2>
+      <div class="row"><label for="k-reason">Reason</label><input id="k-reason" size="30" placeholder="why everything must stop"></div>
+      <button class="danger" id="do-kill">Engage kill switch</button>
+      <p class="note">
+        One way. Disengaging is deliberately not available here: the policy engine denies every
+        action while the switch is engaged, so an endpoint that could clear it would have to bypass
+        the gate. Disengage out of band, with database or environment access.
+      </p>
+    </section>
+
+    <section>
+      <h2>Activity</h2>
+      <div id="log"></div>
+    </section>
+  </div>
+</main>
+
+<script>
+(() => {
+  "use strict";
+
+  const KEY = "aiinv.operator.key";
+  const $ = (id) => document.getElementById(id);
+
+  const state = { key: null };
+  try { state.key = sessionStorage.getItem(KEY); } catch { state.key = null; }
+
+  function log(message, ok) {
+    const line = document.createElement("div");
+    line.textContent = new Date().toISOString().slice(11, 19) + "  " + message;
+    if (ok === true) line.className = "pass";
+    if (ok === false) line.className = "fail";
+    const box = $("log");
+    box.prepend(line);
+    while (box.childElementCount > 120) box.lastElementChild.remove();
+  }
+
+  function headers(json) {
+    const h = {};
+    if (state.key) h["X-Operator-Key"] = state.key;
+    if (json) h["Content-Type"] = "application/json";
+    return h;
+  }
+
+  async function get(path) {
+    const response = await fetch(path, { headers: headers(false) });
+    if (!response.ok) throw new Error(path + " → " + response.status);
+    const text = await response.text();
+    return text ? JSON.parse(text) : null;
+  }
+
+  async function post(path, body) {
+    const response = await fetch(path, {
+      method: "POST",
+      headers: headers(body !== undefined),
+      body: body === undefined ? null : JSON.stringify(body),
+    });
+    let payload = null;
+    const text = await response.text();
+    if (text) { try { payload = JSON.parse(text); } catch { payload = { reason: text }; } }
+    return { status: response.status, ok: response.ok, payload };
+  }
+
+  function table(id, columns, rows, render) {
+    const element = $(id);
+    element.innerHTML = "";
+    if (!rows || rows.length === 0) {
+      element.innerHTML = '<tr><td class="empty">nothing</td></tr>';
+      return;
+    }
+    const head = element.insertRow();
+    for (const column of columns) {
+      const cell = document.createElement("th");
+      cell.textContent = column;
+      head.appendChild(cell);
+    }
+    for (const row of rows) {
+      const tr = element.insertRow();
+      for (const value of render(row)) {
+        const td = tr.insertCell();
+        if (value && typeof value === "object" && value.node) td.appendChild(value.node);
+        else td.textContent = value === null || value === undefined ? "—" : String(value);
+      }
+    }
+  }
+
+  function actionButton(label, handler, danger) {
+    const button = document.createElement("button");
+    button.textContent = label;
+    if (danger) button.className = "danger";
+    button.disabled = !state.key;
+    button.addEventListener("click", handler);
+    return { node: button };
+  }
+
+  function chip(id, text, cls) {
+    const element = $(id);
+    element.textContent = text;
+    element.className = "chip" + (cls ? " " + cls : "");
+  }
+
+  // ---- panels ------------------------------------------------------------------------------
+
+  async function loadHealth() {
+    try {
+      const response = await fetch("/health");
+      chip("c-health", "health " + (response.ok ? "healthy" : "unhealthy"),
+           response.ok ? "ok" : "stop");
+    } catch { chip("c-health", "health unreachable", "stop"); }
+  }
+
+  async function loadWhoAmI() {
+    if (!state.key) { chip("who", "not signed in"); return; }
+    try {
+      const me = await get("/api/operator/whoami");
+      chip("who", me.displayName + " — " + (me.privileges.join(", ") || "no privileges"), "ok");
+    } catch (error) {
+      chip("who", "key not accepted", "stop");
+      log(String(error.message), false);
+    }
+  }
+
+  async function loadOperations() {
+    try {
+      table("t-cycles", ["Cycle", "Capability", "Stage", "Status"],
+        await get("/api/operations/cycles?limit=25"),
+        (c) => [String(c.cycleId).slice(0, 8), c.capability, c.stage, c.status]);
+    } catch (e) { log(e.message, false); }
+
+    try {
+      const escalations = await get("/api/operations/escalations");
+      table("t-escalations", ["Raised", "Capability", "Reason", "Expires", ""],
+        escalations,
+        (e) => [
+          String(e.raisedAtUtc).slice(0, 16).replace("T", " "),
+          e.capability, e.reason,
+          String(e.expiresAtUtc).slice(0, 16).replace("T", " "),
+          actionButton("Answer", () => answerEscalation(e.escalationId)),
+        ]);
+    } catch (e) { log(e.message, false); }
+
+    try {
+      table("t-shadow", ["When", "Capability", "Would have", "Executed"],
+        await get("/api/operations/shadow?limit=25"),
+        (s) => [String(s.recordedAtUtc || s.decidedAtUtc || "").slice(0, 16).replace("T", " "),
+                s.capability, s.wouldHaveMode || s.shadowMode || "—", "no"]);
+    } catch (e) { log(e.message, false); }
+
+    try {
+      table("t-grants", ["Capability", "Granted", "Effective", "Expires"],
+        await get("/api/operations/grants"),
+        (g) => [g.capability, g.grantedMode, g.effectiveMode,
+                String(g.expiresAtUtc || "").slice(0, 10)]);
+    } catch (e) { log(e.message, false); }
+  }
+
+  async function loadOpportunities() {
+    const status = $("status").value;
+    try {
+      const opportunities = await get("/api/opportunities?status=" + encodeURIComponent(status) + "&limit=25");
+      table("t-opportunities", ["Title", "Subject", "Status", "Score", ""],
+        opportunities,
+        (o) => [o.title, (o.subjectKind || "") + ":" + (o.subjectIdentifier || ""), o.status,
+                o.score === null || o.score === undefined ? "—" : o.score,
+                actionButton("Reject", () => rejectOpportunity(o.opportunityId), true)]);
+    } catch (e) { log(e.message, false); }
+  }
+
+  async function loadPromotion() {
+    try {
+      const promotion = await get("/api/autonomy/promotion");
+      const justified = promotion.isJustified === true;
+      chip("c-promotion", justified ? "promotion: criteria met" : "promotion NOT justified",
+           justified ? "ok" : "warn");
+      const lines = (promotion.refusals || promotion.unmetCriteria || []).map((r) =>
+        typeof r === "string" ? r : (r.reason || JSON.stringify(r)));
+      $("promotion").innerHTML = lines.length
+        ? "<ul>" + lines.map((l) => "<li>" + escapeHtml(l) + "</li>").join("") + "</ul>"
+        : '<p class="empty">no detail returned</p>';
+    } catch (e) {
+      chip("c-promotion", "promotion state unreadable", "stop");
+      $("promotion").innerHTML = '<p class="empty">' + escapeHtml(e.message) + "</p>";
+    }
+  }
+
+  async function loadDataPlane() {
+    try {
+      const freshness = await get("/api/data-plane/freshness");
+      const rows = Array.isArray(freshness) ? freshness : (freshness.sources || []);
+      table("t-freshness", ["Source", "State", "Last seen"], rows,
+        (f) => [f.sourceId, f.state, String(f.lastObservedAtUtc || "").slice(0, 16).replace("T", " ")]);
+    } catch (e) { log(e.message, false); }
+
+    try {
+      table("t-runs", ["Source", "Category", "Outcome", "Started"],
+        await get("/api/data-plane/runs?limit=15"),
+        (r) => [r.sourceId, r.category, r.outcome,
+                String(r.startedAtUtc || "").slice(0, 16).replace("T", " ")]);
+    } catch (e) { log(e.message, false); }
+
+    try {
+      const sources = await get("/api/sources");
+      const rows = Array.isArray(sources) ? sources : (sources.items || []);
+      table("t-sources", ["Id", "Authority", "Active"], rows,
+        (s) => [s.id || s.sourceId, s.authority, s.isActive ? "yes" : "no"]);
+    } catch (e) { log(e.message, false); }
+  }
+
+  async function loadLedger() {
+    try {
+      const ledger = await get("/api/capital/ledger");
+      $("ledger").innerHTML =
+        '<p class="mono">entries ' + escapeHtml(String(ledger.entryCount)) +
+        " · balanced " + (ledger.isBalanced ? "yes" : "<strong>no</strong>") + "</p>";
+    } catch (e) { $("ledger").innerHTML = '<p class="empty">' + escapeHtml(e.message) + "</p>"; }
+  }
+
+  async function loadValidation() {
+    try {
+      const report = await get("/api/validation/report");
+      $("validation").innerHTML =
+        "<p><strong>" + escapeHtml(String(report.verdict || "unknown")) + "</strong></p>" +
+        '<p class="note">' + escapeHtml(String(report.summary || "")) + "</p>";
+    } catch (e) { $("validation").innerHTML = '<p class="empty">' + escapeHtml(e.message) + "</p>"; }
+  }
+
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  // ---- operator actions --------------------------------------------------------------------
+
+  function report(what, result) {
+    const detail = result.payload && (result.payload.reason || result.payload.detail || "");
+    log(what + " → " + result.status + (detail ? " " + detail : ""), result.ok);
+    if (result.status === 401) chip("who", "not signed in — key required", "stop");
+  }
+
+  async function rejectOpportunity(id) {
+    const reason = prompt("Why is this opportunity being refused?");
+    if (!reason) return;
+    report("reject " + id, await post("/api/operator/opportunities/" + id + "/rejection", { reason }));
+    await loadOpportunities();
+  }
+
+  async function answerEscalation(id) {
+    const resolution = prompt("What was done about it? (Cancel = acknowledge only)");
+    const result = resolution
+      ? await post("/api/operator/escalations/" + id + "/resolution", { resolution })
+      : await post("/api/operator/escalations/" + id + "/acknowledgement");
+    report((resolution ? "resolve " : "acknowledge ") + id, result);
+    await loadOperations();
+  }
+
+  async function engageKillSwitch() {
+    const reason = $("k-reason").value.trim();
+    if (!reason) { log("the kill switch needs a reason", false); return; }
+    if (!confirm("Engage the kill switch? Everything stops, and disengaging is out of band.")) return;
+    report("engage kill switch", await post("/api/operator/kill-switch/engagement", { reason }));
+    await refreshAll();
+  }
+
+  async function createWatch() {
+    const body = {
+      name: $("w-name").value.trim(),
+      targetKind: $("w-kind").value.trim(),
+      targetIdentifier: $("w-id").value.trim(),
+      intervalMinutes: Number($("w-interval").value),
+      cooldownMinutes: Number($("w-cooldown").value),
+      capability: $("w-capability").value.trim(),
+      cycleTemplate: $("w-template").value.trim(),
+    };
+    report("create watch " + body.targetIdentifier, await post("/api/operator/watches", body));
+  }
+
+  async function activateSource() {
+    const id = $("activate-id").value.trim();
+    if (!id) return;
+    report("activate " + id, await post("/api/sources/" + encodeURIComponent(id) + "/activation"));
+    await loadDataPlane();
+  }
+
+  // ---- wiring ------------------------------------------------------------------------------
+
+  async function refreshAll() {
+    await Promise.all([
+      loadHealth(), loadWhoAmI(), loadOperations(), loadOpportunities(),
+      loadPromotion(), loadDataPlane(), loadLedger(), loadValidation(),
+    ]);
+    chip("c-kill", "kill switch state is read by the platform, not shown here", "warn");
+  }
+
+  $("signin").addEventListener("click", async () => {
+    state.key = $("key").value.trim() || null;
+    try { if (state.key) sessionStorage.setItem(KEY, state.key); } catch { /* private mode */ }
+    $("key").value = "";
+    await refreshAll();
+  });
+
+  $("signout").addEventListener("click", async () => {
+    state.key = null;
+    try { sessionStorage.removeItem(KEY); } catch { /* private mode */ }
+    await refreshAll();
+  });
+
+  $("refresh").addEventListener("click", refreshAll);
+  $("load-opps").addEventListener("click", loadOpportunities);
+  $("do-kill").addEventListener("click", engageKillSwitch);
+  $("do-watch").addEventListener("click", createWatch);
+  $("do-activate").addEventListener("click", activateSource);
+
+  refreshAll();
+})();
+</script>
+</body>
+</html>

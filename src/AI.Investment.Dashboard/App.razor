@@ -1,0 +1,28 @@
+@implements IDisposable
+@inject LocalizationState Localization
+
+@*
+    The root. It re-renders the whole tree when the language changes, because the change is not a
+    matter of swapping strings: the document direction and every formatted number change with it.
+*@
+<Router AppAssembly="@typeof(App).Assembly">
+    <Found Context="routeData">
+        <RouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)" />
+        <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+    </Found>
+    <NotFound>
+        <LayoutView Layout="@typeof(MainLayout)">
+            <section class="panel">
+                <h1>@Localization["error.notFound"]</h1>
+            </section>
+        </LayoutView>
+    </NotFound>
+</Router>
+
+@code {
+    protected override void OnInitialized() => Localization.Changed += OnLanguageChanged;
+
+    private void OnLanguageChanged() => StateHasChanged();
+
+    public void Dispose() => Localization.Changed -= OnLanguageChanged;
+}

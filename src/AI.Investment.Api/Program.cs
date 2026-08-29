@@ -3,10 +3,12 @@ using AI.Investment.Api.Correlation;
 using AI.Investment.Api.Diagnostics;
 using AI.Investment.Api.HostedServices;
 using AI.Investment.Api.Middleware;
+using AI.Investment.Api.Security;
 using AI.Investment.Application;
 using AI.Investment.Application.Abstractions;
 using AI.Investment.Infrastructure;
 using AI.Investment.Infrastructure.Configuration;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Serilog;
@@ -186,6 +188,27 @@ public sealed class Program
         builder.Services.AddHttpContextAccessor();
         builder.Services.AddScoped<ICorrelationContext, HttpCorrelationContext>();
 
+        // ---- Operator identity ------------------------------------------------------------
+        //
+        // Deliberately NOT ValidateOnStart, and deliberately shipped empty. An installation that
+        // has configured no operators authenticates nobody and answers 401 on every operator
+        // endpoint, which is the fail-closed default; a malformed account authenticates nobody
+        // rather than stopping a host that is otherwise serving read traffic and health checks.
+        builder.Services.AddOptions<OperatorOptions>()
+            .Bind(builder.Configuration.GetSection(OperatorOptions.SectionName));
+
+        // The second adapter, the same shape as the correlation one: the transport owns the
+        // mechanism, the application owns the concept of an operator.
+        builder.Services.AddScoped<IOperatorContext, HttpOperatorContext>();
+
+        builder.Services
+            .AddAuthentication(OperatorAuthentication.Scheme)
+            .AddScheme<AuthenticationSchemeOptions, OperatorKeyAuthenticationHandler>(
+                OperatorAuthentication.Scheme,
+                configureOptions: null);
+
+        builder.Services.AddAuthorization(OperatorPolicies.Register);
+
         // ---- Background work -------------------------------------------------------------
         // Both read DataPlaneOptions and return immediately when their activity is disabled,
         // which it is by default. Registering them unconditionally keeps the decision in
@@ -255,12 +278,35 @@ public sealed class Program
 
         app.UseHttpsRedirection();
 
-        // NOTE: authentication and authorization are deliberately NOT registered.
-        // The pre-Phase-0 solution called UseAuthorization() with no authentication scheme,
-        // which is a no-op that reads as security in review (audit finding F-03). Real
-        // OIDC/JWT authentication is scheduled work; an honest absence is safer than a
-        // decorative call. Until it exists, do not expose this API beyond localhost.
-        // See docs/SECURITY.md.
+        // The operator console: a static page under wwwroot, served before authentication because
+        // the page itself is public. Everything it can actually do is an authenticated call it
+        // makes with a key the operator types in, and the browser holds that key for one session.
+        app.UseDefaultFiles();
+
+        // Block 4: the operator dashboard is a Blazor WebAssembly application published into
+        // wwwroot/dashboard. This maps the framework's own file types - .wasm, .dat, .blat - which
+        // UseStaticFiles alone does not know, and rewrites its client-side routes back to the
+        // application's own index.html so a deep link survives a page refresh.
+        //
+        // Same origin as the API, deliberately: the dashboard is served by the platform it reads,
+        // so no cross-origin policy has to be opened for it, and the operator key never crosses an
+        // origin boundary. The directory is absent until the dashboard is published, and the
+        // middleware is harmless when it is.
+        app.UseBlazorFrameworkFiles("/dashboard");
+
+        app.UseStaticFiles();
+
+        // Authentication and authorization, registered for real. The pre-Phase-0 solution called
+        // UseAuthorization() with no authentication scheme, which is a no-op that reads as security
+        // in review (audit finding F-03); Phase 0 removed it and left an honest absence rather than
+        // a decorative call. Development block 1 replaced the absence with a keyed operator scheme -
+        // one identity per key, one policy per privilege, and nothing granted by default.
+        //
+        // Read endpoints stay anonymous. That is unchanged and still means this API must not be
+        // exposed beyond a trusted network. What has changed is that no *write* is anonymous any
+        // more. See docs/SECURITY.md and docs/Blocks/BLOCK-1-OPERATOR-SURFACE.md.
+        app.UseAuthentication();
+        app.UseAuthorization();
 
         app.MapHealthChecks("/health/live", new HealthCheckOptions
         {

@@ -973,6 +973,58 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                     b.ToTable("opportunities", (string)null);
                 });
 
+            modelBuilder.Entity("AI.Investment.Domain.Portfolio.PositionEvent", b =>
+                {
+                    b.Property<Guid>("PositionEventId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("Change")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("change");
+
+                    b.Property<string>("Instrument")
+                        .IsRequired()
+                        .HasMaxLength(60)
+                        .HasColumnType("character varying(60)")
+                        .HasColumnName("instrument");
+
+                    b.Property<DateTime>("OccurredAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("occurred_at_utc");
+
+                    b.Property<Guid>("OpportunityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("opportunity_id");
+
+                    b.Property<decimal>("Quantity")
+                        .HasPrecision(18, 8)
+                        .HasColumnType("numeric(18,8)")
+                        .HasColumnName("quantity");
+
+                    b.Property<string>("VenueReference")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("venue_reference");
+
+                    b.HasKey("PositionEventId");
+
+                    b.HasIndex("Instrument")
+                        .HasDatabaseName("ix_position_events_instrument");
+
+                    b.HasIndex("OccurredAtUtc")
+                        .HasDatabaseName("ix_position_events_occurred_at_utc");
+
+                    b.HasIndex("VenueReference")
+                        .IsUnique()
+                        .HasDatabaseName("ux_position_events_venue_reference");
+
+                    b.ToTable("position_events", (string)null);
+                });
+
             modelBuilder.Entity("AI.Investment.Domain.Retention.UnreplayableEvidence", b =>
                 {
                     b.Property<string>("Id")
@@ -1902,6 +1954,63 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                         .IsRequired();
 
                     b.Navigation("Subject")
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Portfolio.PositionEvent", b =>
+                {
+                    b.OwnsOne("AI.Investment.Domain.ValueObjects.Money", "Fees", b1 =>
+                        {
+                            b1.Property<Guid>("PositionEventId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 4)
+                                .HasColumnType("numeric(18,4)")
+                                .HasColumnName("fees");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("fees_currency");
+
+                            b1.HasKey("PositionEventId");
+
+                            b1.ToTable("position_events");
+
+                            b1.WithOwner()
+                                .HasForeignKey("PositionEventId");
+                        });
+
+                    b.OwnsOne("AI.Investment.Domain.ValueObjects.Money", "Price", b1 =>
+                        {
+                            b1.Property<Guid>("PositionEventId")
+                                .HasColumnType("uuid");
+
+                            b1.Property<decimal>("Amount")
+                                .HasPrecision(18, 4)
+                                .HasColumnType("numeric(18,4)")
+                                .HasColumnName("price");
+
+                            b1.Property<string>("Currency")
+                                .IsRequired()
+                                .HasMaxLength(3)
+                                .HasColumnType("character varying(3)")
+                                .HasColumnName("price_currency");
+
+                            b1.HasKey("PositionEventId");
+
+                            b1.ToTable("position_events");
+
+                            b1.WithOwner()
+                                .HasForeignKey("PositionEventId");
+                        });
+
+                    b.Navigation("Fees")
+                        .IsRequired();
+
+                    b.Navigation("Price")
                         .IsRequired();
                 });
 

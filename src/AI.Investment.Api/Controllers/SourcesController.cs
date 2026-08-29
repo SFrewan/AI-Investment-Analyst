@@ -3,6 +3,8 @@ using AI.Investment.Application.Sources;
 using AI.Investment.Application.Sources.ActivateSource;
 using AI.Investment.Domain.Exceptions;
 using AI.Investment.Domain.Sources;
+using AI.Investment.Api.Security;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace AI.Investment.Api.Controllers;
@@ -85,8 +87,18 @@ public sealed class SourcesController : ControllerBase
     /// processing, so a licensing failure surfaces even if some future caller bypassed this
     /// handler.
     /// </remarks>
+    /// <remarks>
+    /// <para>
+    /// <strong>Authenticated as of development block 1.</strong> Activating a source is what makes
+    /// the platform start fetching from it, and it was anonymous until there was an identity to
+    /// record. It requires the same privilege as creating a watch, because the two together are
+    /// what point the platform at something.
+    /// </para>
+    /// </remarks>
     [HttpPost("{id}/activation")]
+    [Authorize(Policy = OperatorPolicies.AdministerWatches)]
     [ProducesResponseType(typeof(ActivateSourceResult), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
     [ProducesResponseType(typeof(ActivateSourceResult), StatusCodes.Status202Accepted)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status400BadRequest)]
     [ProducesResponseType(typeof(ProblemDetails), StatusCodes.Status403Forbidden)]

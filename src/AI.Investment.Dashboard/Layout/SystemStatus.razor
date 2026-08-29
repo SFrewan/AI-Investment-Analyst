@@ -1,0 +1,54 @@
+@implements IDisposable
+@inject LocalizationState Localization
+@inject PlatformClient Client
+@inject RefreshState Refresh
+
+@*
+    The platform's readiness, from its own health endpoint. It reports what the endpoint said and
+    nothing more: a dashboard that showed a green light while the backend was unreachable would be
+    reporting on itself.
+*@
+<span class="chip @Class" title="@Localization["shell.systemStatus"]">@Text</span>
+
+@code {
+    private ApiFailure? _state;
+
+    private string Class => _state switch
+    {
+        ApiFailure.None => "ok",
+        null => "idle",
+        ApiFailure.Network => "bad",
+        _ => "warn",
+    };
+
+    private string Text => _state switch
+    {
+        ApiFailure.None => Localization["overview.health"],
+        null => Localization["state.loading"],
+        ApiFailure.Network => Localization["error.network"],
+        _ => Localization["state.unavailable"],
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        Refresh.Requested += LoadAsync;
+        Localization.Changed += OnChanged;
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _state = await Client.ProbeAsync("health/ready");
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Refresh.Requested -= LoadAsync;
+        Localization.Changed -= OnChanged;
+    }
+}

@@ -30,6 +30,7 @@ using AI.Investment.Infrastructure.Validation;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 
 namespace AI.Investment.Infrastructure;
 
@@ -105,6 +106,32 @@ public static class DependencyInjection
         services.AddOptions<SimulatedVenueOptions>()
             .Bind(configuration.GetSection(SimulatedVenueOptions.SectionName))
             .ValidateDataAnnotations();
+
+        // Same reasoning as SecEdgarOptions. A price-history connector configured without a
+        // directory or without stated licensing terms should leave the platform running with that
+        // connector absent, which the ingestion gateway reports as a named refusal, rather than
+        // stop the host.
+        services.AddOptions<MarketDataOptions>()
+            .Bind(configuration.GetSection(MarketDataOptions.SectionName))
+            .ValidateDataAnnotations();
+
+        // Same reasoning again, and one more consideration: the EODHD section holds a secret.
+        // ValidateOnStart would put the validator's own report - which names the section and, on a
+        // binder failure, can echo values - into start-up logs on every misconfigured deployment.
+        // The connector refuses to run without a key and says so where an operator is looking.
+        services.AddOptions<EodhdOptions>()
+            .Bind(configuration.GetSection(EodhdOptions.SectionName))
+            .ValidateDataAnnotations();
+
+        services.AddOptions<DiscoveryOptions>()
+            .Bind(configuration.GetSection(DiscoveryOptions.SectionName))
+            .ValidateDataAnnotations();
+
+        // The application layer depends on the dependency-injection abstraction and nothing else -
+        // no configuration provider and no options binder - so the bound options are turned into a
+        // plain settings object here and handed over as one.
+        services.AddSingleton(provider =>
+            provider.GetRequiredService<IOptions<DiscoveryOptions>>().Value.ToSettings());
     }
 
     /// <summary>
@@ -128,8 +155,17 @@ public static class DependencyInjection
         services.AddScoped<IOpportunityRepository, EfOpportunityRepository>();
         services.AddScoped<IApprovalTokenStore, EfApprovalTokenStore>();
         services.AddScoped<ILedgerStore, EfLedgerStore>();
+
+        // Beside the ledger, and for the same reason: a fill has two consequences - money moves and
+        // a holding changes - and both are recorded inside the one authorised window.
+        services.AddScoped<IPositionEventStore, EfPositionEventStore>();
         services.AddScoped<IExposureProvider, LedgerExposureProvider>();
         services.AddScoped<IKillSwitch, DatabaseAndEnvironmentKillSwitch>();
+
+        // The write half, and it only ever engages. Scoped like the read half because it writes
+        // through the same guarded context, inside the authorisation window the gateway opens.
+        // There is deliberately no disengage - see IKillSwitchAdministration.
+        services.AddScoped<IKillSwitchAdministration, EfKillSwitchAdministration>();
         services.AddSingleton<ILimitProvider, ConfiguredLimitProvider>();
 
         services.AddScoped<IExecutionVenue, SimulatedVenue>();
@@ -257,7 +293,105 @@ public static class DependencyInjection
         // registration would have failed the whole host's start-up rather than leaving one feature
         // absent. All five now exist.
         AddSecEdgar(services, configuration);
+        AddPriceHistory(services, configuration);
+        AddEodhd(services, configuration);
         AddNormalizers(services);
+    }
+
+    /// <summary>
+    /// Registers the operator-supplied price-history connector, when one is configured.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The platform needs closing prices before it can measure anything about its own decisions, and
+    /// there is no free, licensed, redistributable source of them this repository could ship a
+    /// connector for. So the transport is a directory the operator names, holding a series they
+    /// already hold a licence for, read through the same <see cref="IDataProvider"/> contract as
+    /// every other source. A vendor API later is one more registration here.
+    /// </para>
+    /// <para>
+    /// Absent unless deliberately enabled with a directory and stated licensing terms. An
+    /// installation that has configured nothing gets no connector, the gateway refuses runs for that
+    /// source with a named reason, and nothing anywhere invents a price.
+    /// </para>
+    /// <para>
+    /// Singleton: the connector holds a resolved options snapshot and the clock, both of which are
+    /// themselves singletons, and reading a file needs no per-request state.
+    /// </para>
+    /// </remarks>
+    private static void AddPriceHistory(IServiceCollection services, IConfiguration configuration)
+    {
+        var section = configuration.GetSection(MarketDataOptions.SectionName);
+
+        if (!bool.TryParse(section["Enabled"], out var enabled) || !enabled)
+        {
+            return;
+        }
+
+        services.AddSingleton<PriceHistoryFileProvider>();
+        services.AddTransient<IDataProvider>(provider =>
+            provider.GetRequiredService<PriceHistoryFileProvider>());
+
+        // The connector ships the registry entry, inactive, exactly as the EDGAR one does - except
+        // that the licensing terms on it come from the operator rather than from this repository,
+        // because only the operator knows what their vendor permits.
+        services.AddSingleton<ISourceDefinition, PriceHistorySource>();
+    }
+
+    /// <summary>
+    /// Registers the EODHD end-of-day connector, when one is configured.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Added beside the existing connectors, not instead of them. EDGAR keeps its source, the
+    /// operator's own price export keeps its source, and this one has a third; which of them a run
+    /// uses is decided by the source on the request, which is configuration and an operator's
+    /// activation rather than anything chosen here.
+    /// </para>
+    /// <para>
+    /// Absent unless deliberately enabled. An installation that has configured nothing gets no
+    /// connector, the gateway refuses runs for that source with a named reason, and nothing
+    /// anywhere invents a price.
+    /// </para>
+    /// <para>
+    /// <strong>The key is not read here.</strong> Only <c>Enabled</c> and the base address are,
+    /// because those two decide the shape of the container and must be known while it is being
+    /// built. The credential is resolved through the options snapshot inside the connector, at the
+    /// moment it is used, so it never sits in a variable in this method.
+    /// </para>
+    /// </remarks>
+    private static void AddEodhd(IServiceCollection services, IConfiguration configuration)
+    {
+        var section = configuration.GetSection(EodhdOptions.SectionName);
+
+        if (!bool.TryParse(section["Enabled"], out var enabled) || !enabled)
+        {
+            return;
+        }
+
+        var baseAddress = section["BaseAddress"];
+
+        if (string.IsNullOrWhiteSpace(baseAddress))
+        {
+            baseAddress = EodhdOptions.DefaultBaseAddress;
+        }
+
+        services
+            .AddHttpClient<EodhdProvider>(client =>
+            {
+                client.BaseAddress = new Uri(baseAddress, UriKind.Absolute);
+
+                // A request that has not answered in half a minute is a request the scheduler
+                // should be told about, not one a thread should keep waiting on. The same figure
+                // as EDGAR's, for the same reason.
+                client.Timeout = TimeSpan.FromSeconds(30);
+            });
+
+        services.AddTransient<IDataProvider>(provider => provider.GetRequiredService<EodhdProvider>());
+
+        // Registered inactive, like every other definition: seeding registers, an operator
+        // activates through the Action/Policy seam.
+        services.AddSingleton<ISourceDefinition, EodhdSource>();
     }
 
     /// <summary>Registers the normalisers that read archived payloads.</summary>
@@ -280,6 +414,17 @@ public static class DependencyInjection
     private static void AddNormalizers(IServiceCollection services)
     {
         services.AddSingleton<INormalizer, SecEdgarSubmissionsNormalizer>();
+
+        // Registered whether or not the price-history connector is enabled, for the same reason as
+        // the one above it: a normaliser reads bytes that are already in the archive, and turning a
+        // connector off must not make everything it ever fetched unreadable.
+        services.AddSingleton<INormalizer, DailyClosePriceNormalizer>();
+
+        // And again for EODHD's wire format. Unconditional for the same reason: payloads already
+        // in the archive stay readable whether or not the connector that fetched them is currently
+        // switched on. It needs the options only for the exchange sessions, and quarantines a
+        // payload whose exchange nobody stated rather than assuming one.
+        services.AddSingleton<INormalizer, EodhdDailyPriceNormalizer>();
     }
 
     private static void AddSecEdgar(IServiceCollection services, IConfiguration configuration)
@@ -332,6 +477,11 @@ public static class DependencyInjection
 
         services.AddScoped<IPolicyContextProvider, ConfiguredPolicyContextProvider>();
         services.AddScoped<IAuditSink, EfAuditSink>();
+
+        // The read side of the same trail, narrowed to the two counts the circuit breaker needs.
+        // Separate from the sink because reading an append-only record is a different concern from
+        // writing it, and because nothing else in the platform may read it at all.
+        services.AddScoped<IAuditStatistics, EfAuditStatistics>();
         services.AddScoped<IActionExecutionStore, EfActionExecutionStore>();
         services.AddScoped<IIdempotencyStore, EfIdempotencyStore>();
     }

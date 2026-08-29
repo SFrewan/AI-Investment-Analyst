@@ -2,6 +2,7 @@ using AI.Investment.Application.Abstractions;
 using AI.Investment.Application.Actions;
 using AI.Investment.Domain.Approvals;
 using AI.Investment.Domain.Capital;
+using AI.Investment.Domain.Portfolio;
 using AI.Investment.Domain.Enums;
 using AI.Investment.Domain.Limits;
 using AI.Investment.Domain.Opportunities;
@@ -41,6 +42,7 @@ public sealed class OpportunityExecutor
     private readonly IApprovalTokenStore _tokens;
     private readonly IExecutionVenue _venue;
     private readonly ILedgerStore _ledger;
+    private readonly IPositionEventStore _positions;
     private readonly ILimitProvider _limits;
     private readonly IExposureProvider _exposure;
     private readonly IKillSwitch _killSwitch;
@@ -54,6 +56,7 @@ public sealed class OpportunityExecutor
         IApprovalTokenStore tokens,
         IExecutionVenue venue,
         ILedgerStore ledger,
+        IPositionEventStore positions,
         ILimitProvider limits,
         IExposureProvider exposure,
         IKillSwitch killSwitch,
@@ -66,6 +69,7 @@ public sealed class OpportunityExecutor
         _tokens = tokens ?? throw new ArgumentNullException(nameof(tokens));
         _venue = venue ?? throw new ArgumentNullException(nameof(venue));
         _ledger = ledger ?? throw new ArgumentNullException(nameof(ledger));
+        _positions = positions ?? throw new ArgumentNullException(nameof(positions));
         _limits = limits ?? throw new ArgumentNullException(nameof(limits));
         _exposure = exposure ?? throw new ArgumentNullException(nameof(exposure));
         _killSwitch = killSwitch ?? throw new ArgumentNullException(nameof(killSwitch));
@@ -130,8 +134,18 @@ public sealed class OpportunityExecutor
 
                 if (venueResult.Filled)
                 {
-                    await _ledger
-                        .AppendAsync(Postings(request, venueResult.RequireFill()), token)
+                    var fill = venueResult.RequireFill();
+
+                    await _ledger.AppendAsync(Postings(request, fill), token).ConfigureAwait(false);
+
+                    // The same fill, recorded against the holding it moved, inside the same
+                    // authorised window and the same transaction as the postings above. Outside
+                    // this window the persistence guard refuses the write, which is the property
+                    // that keeps a holding from being changed by anything but an authorised
+                    // execution. The venue's own reference is the idempotency key: a fill applied
+                    // twice writes nothing the second time.
+                    await _positions
+                        .AppendAsync(PositionMovement(request, fill), token)
                         .ConfigureAwait(false);
                 }
 
@@ -206,6 +220,38 @@ public sealed class OpportunityExecutor
 
         return ExecutionOutcome.Filled(venueResult.RequireFill());
     }
+
+    /// <summary>
+    /// The same fill, expressed as the movement it caused in a holding.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A translation, not a second event. It carries the venue's own reference, so the position
+    /// record and the venue's own books can be reconciled against each other, and so applying the
+    /// fill twice is refused by a uniqueness constraint rather than by a convention.
+    /// </para>
+    /// <para>
+    /// The instrument is the order's, which is the same string the limit engine reads per-instrument
+    /// exposure by. Normalising it here would make a holding invisible to the concentration check
+    /// that is supposed to see it.
+    /// </para>
+    /// <para>
+    /// Fees are carried but excluded from cost, matching the postings above: the ledger charges them
+    /// to their own account rather than into <c>Positions</c>.
+    /// </para>
+    /// </remarks>
+    private static PositionEvent PositionMovement(ExecutionRequest request, VenueFill fill) =>
+        PositionEvent.Record(
+            request.Order.Instrument,
+            request.Order.Side == OrderSide.Buy
+                ? PositionChange.Acquired
+                : PositionChange.Disposed,
+            fill.Quantity,
+            fill.Price,
+            fill.Fees,
+            fill.VenueReference,
+            request.Opportunity.OpportunityId,
+            fill.FilledAtUtc);
 
     /// <summary>
     /// The double-entry postings for one fill.

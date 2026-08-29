@@ -1,0 +1,119 @@
+@page "/opportunities"
+@implements IDisposable
+@inject LocalizationState L
+@inject PlatformClient Client
+@inject RefreshState Refresh
+
+<PageTitle>@L["opportunities.title"] · @L["app.name"]</PageTitle>
+
+<h1>@L["opportunities.title"]</h1>
+
+<section class="panel">
+    <div class="panel-head">
+        <h2>@L["opportunities.status"]</h2>
+        @* The API filters by lifecycle state, so the filter is the API's, not a client-side one. *@
+        <select aria-label="@L["opportunities.status"]" @onchange="OnStatusChanged">
+            @foreach (var status in Statuses)
+            {
+                <option value="@status" selected="@(status == _status)">@status</option>
+            }
+        </select>
+    </div>
+
+    <DataState Loading="@_loading"
+               Failure="@_failure"
+               IsEmpty="@(_opportunities is { Count: 0 })"
+               EmptyKey="opportunities.empty"
+               EmptyWhyKey="opportunities.emptyWhy"
+               OnRetry="@(() => Refresh.RequestAsync())">
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">@L["portfolio.instrument"]</th>
+                        <th scope="col">@L["opportunities.title"]</th>
+                        <th scope="col">@L["opportunities.status"]</th>
+                        <th scope="col" class="num">@L["opportunities.score"]</th>
+                        <th scope="col">@L["opportunities.risk"]</th>
+                        <th scope="col" class="num">@L["opportunities.evidence"]</th>
+                        <th scope="col">@L["opportunities.created"]</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var opportunity in Sorted)
+                    {
+                        <tr>
+                            <td>@(opportunity.SubjectIdentifier ?? L["state.notApplicable"])</td>
+                            <td>
+                                <a href="@($"opportunities/{opportunity.OpportunityId}")">
+                                    @opportunity.Title
+                                </a>
+                            </td>
+                            <td>@opportunity.Status</td>
+                            <td class="num">
+                                @(opportunity.Score is { } score
+                                    ? L.Number(score.Value, 3)
+                                    : L["state.notApplicable"])
+                            </td>
+                            <td>@(opportunity.Risk?.Reversibility ?? L["state.notApplicable"])</td>
+                            <td class="num">@L.Number(opportunity.EvidenceCount, 0)</td>
+                            <td>@L.Instant(opportunity.DiscoveredAtUtc)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </DataState>
+</section>
+
+@code {
+    private static readonly string[] Statuses =
+        ["Proposed", "Approved", "Executing", "Active", "Closed", "Rejected"];
+
+    private IReadOnlyList<OpportunityDto>? _opportunities;
+    private ApiFailure? _failure;
+    private bool _loading = true;
+    private string _status = "Proposed";
+
+    private IEnumerable<OpportunityDto> Sorted =>
+        (_opportunities ?? []).OrderByDescending(o => o.DiscoveredAtUtc);
+
+    protected override async Task OnInitializedAsync()
+    {
+        Refresh.Requested += LoadAsync;
+        L.Changed += OnChanged;
+
+        await LoadAsync();
+    }
+
+    private async Task OnStatusChanged(ChangeEventArgs args)
+    {
+        _status = args.Value?.ToString() ?? "Proposed";
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+
+        await InvokeAsync(StateHasChanged);
+
+        var result = await Client.GetAsync<List<OpportunityDto>>(
+            $"api/opportunities?status={Uri.EscapeDataString(_status)}&limit=50");
+
+        _opportunities = result.Value;
+        _failure = result.Failure;
+        _loading = false;
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Refresh.Requested -= LoadAsync;
+        L.Changed -= OnChanged;
+    }
+}

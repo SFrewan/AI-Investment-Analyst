@@ -1,0 +1,153 @@
+@page "/safety"
+@implements IDisposable
+@inject LocalizationState L
+@inject PlatformClient Client
+@inject RefreshState Refresh
+
+<PageTitle>@L["safety.title"] · @L["app.name"]</PageTitle>
+
+<h1>@L["safety.title"]</h1>
+
+@*
+    The three facts this page exists to make unmissable, stated before anything is loaded so they
+    are true even when the platform cannot be reached.
+
+    There is no promote control, no live-execution control, no broker control and no kill-switch
+    disengage control on this page or anywhere in this application. Engaging the kill switch is
+    done through the operator console, where it goes through the action gateway and is audited
+    under a person's name.
+*@
+<div class="banner">
+    <span><strong>@L["safety.currentLevel"]:</strong> @L["safety.l3"]</span>
+    <span><strong>@L["safety.liveExecution"]:</strong> @L["safety.liveExecutionUnavailable"]</span>
+    <span><strong>@L["safety.promotion"]:</strong> @PromotionText</span>
+</div>
+
+<section class="panel">
+    <div class="panel-head"><h2>@L["safety.currentLevel"]</h2></div>
+    <p>@L["safety.l3Note"]</p>
+    <p class="panel-note">@L["safety.liveExecutionNote"]</p>
+</section>
+
+<section class="panel">
+    <div class="panel-head"><h2>@L["safety.promotionState"]</h2></div>
+
+    <DataState Loading="@_loading" Failure="@_promotionFailure" OnRetry="@(() => Refresh.RequestAsync())">
+        @if (_promotion is { } promotion)
+        {
+            <p>
+                <span class="chip @(promotion.IsJustified ? "warn" : "idle")">@promotion.Verdict</span>
+            </p>
+
+            <p class="panel-note">
+                @promotion.Capability · @promotion.ProposedMode · @L.Instant(promotion.AssessedAtUtc)
+            </p>
+
+            @if (promotion.Refusals.Count > 0)
+            {
+                <h3>@L["safety.unmetCriteria"]</h3>
+                <ul>
+                    @foreach (var refusal in promotion.Refusals)
+                    {
+                        <li>@refusal</li>
+                    }
+                </ul>
+            }
+
+            @if (promotion.Reasons.Count > 0)
+            {
+                <ul>
+                    @foreach (var reason in promotion.Reasons)
+                    {
+                        <li>@reason</li>
+                    }
+                </ul>
+            }
+        }
+    </DataState>
+</section>
+
+<section class="panel">
+    <div class="panel-head"><h2>@L["safety.grants"]</h2></div>
+
+    <DataState Loading="@_loading"
+               Failure="@_grantsFailure"
+               IsEmpty="@(_grants is { Count: 0 })"
+               EmptyKey="safety.noWarrant">
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">@L["operations.capability"]</th>
+                        <th scope="col">@L["safety.currentLevel"]</th>
+                        <th scope="col">@L["opportunities.risk"]</th>
+                        <th scope="col">@L["opportunities.status"]</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var grant in _grants ?? [])
+                    {
+                        <tr>
+                            <td>@grant.Capability</td>
+                            <td>@grant.EffectiveMode</td>
+                            <td>@grant.MaxRiskTier</td>
+                            <td>
+                                <span class="chip @(grant.IsActive ? "ok" : "idle")">
+                                    @(grant.IsActive ? L["market.active"] : L["market.inactive"])
+                                </span>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </DataState>
+</section>
+
+@code {
+    private PromotionAssessmentDto? _promotion;
+    private IReadOnlyList<AutonomyGrantDto>? _grants;
+    private ApiFailure? _promotionFailure;
+    private ApiFailure? _grantsFailure;
+    private bool _loading = true;
+
+    /// <summary>
+    /// The platform's own verdict when it has answered, and the safe statement before that. It
+    /// never reads as justified because this client decided so.
+    /// </summary>
+    private string PromotionText => _promotion?.Verdict ?? L["safety.noWarrant"];
+
+    protected override async Task OnInitializedAsync()
+    {
+        Refresh.Requested += LoadAsync;
+        L.Changed += OnChanged;
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+
+        await InvokeAsync(StateHasChanged);
+
+        var promotion = await Client.GetAsync<PromotionAssessmentDto>("api/autonomy/promotion");
+        var grants = await Client.GetAsync<List<AutonomyGrantDto>>("api/operations/grants");
+
+        _promotion = promotion.Value;
+        _promotionFailure = promotion.Failure;
+        _grants = grants.Value;
+        _grantsFailure = grants.Failure;
+        _loading = false;
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Refresh.Requested -= LoadAsync;
+        L.Changed -= OnChanged;
+    }
+}

@@ -63,10 +63,20 @@ public sealed class DataPlaneEndpointTests : IClassFixture<ApiFactory>
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
+    /// <summary>
+    /// A malformed identifier is still refused before anything is attempted - now from behind
+    /// authentication.
+    /// </summary>
+    /// <remarks>
+    /// Activation became an authenticated action in development block 1: it is what makes the
+    /// platform start fetching from a source, and it was anonymous until there was an identity to
+    /// record. The client here presents an operator key so the assertion is still about the
+    /// identifier check rather than about the gate, which has its own tests.
+    /// </remarks>
     [Fact]
     public async Task A_malformed_source_id_is_rejected_before_activation_is_attempted()
     {
-        using var client = _factory.CreateClient();
+        using var client = _factory.CreateOperatorClient(ApiFactory.OperatorKey);
 
         using var response = await client.PostAsync(
             new Uri("/api/sources/NOT A SOURCE ID/activation", UriKind.Relative),

@@ -45,6 +45,7 @@ public sealed class AutonomyCircuitBreaker
     private readonly IAutonomyGrantStore _grants;
     private readonly IPromotionWarrantStore _warrants;
     private readonly IEscalationStore _escalations;
+    private readonly IAuditStatistics _incidents;
     private readonly IKillSwitch _killSwitch;
     private readonly AutonomyAdministration _administration;
     private readonly IClock _clock;
@@ -53,6 +54,7 @@ public sealed class AutonomyCircuitBreaker
         IAutonomyGrantStore grants,
         IPromotionWarrantStore warrants,
         IEscalationStore escalations,
+        IAuditStatistics incidents,
         IKillSwitch killSwitch,
         AutonomyAdministration administration,
         IClock clock)
@@ -60,6 +62,7 @@ public sealed class AutonomyCircuitBreaker
         _grants = grants ?? throw new ArgumentNullException(nameof(grants));
         _warrants = warrants ?? throw new ArgumentNullException(nameof(warrants));
         _escalations = escalations ?? throw new ArgumentNullException(nameof(escalations));
+        _incidents = incidents ?? throw new ArgumentNullException(nameof(incidents));
         _killSwitch = killSwitch ?? throw new ArgumentNullException(nameof(killSwitch));
         _administration = administration ?? throw new ArgumentNullException(nameof(administration));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
@@ -104,17 +107,21 @@ public sealed class AutonomyCircuitBreaker
 
             var warrantValid = await WarrantStillCoversAsync(grant, now, cancellationToken).ConfigureAwait(false);
 
+            // Counted for this capability alone, over this grant's own lifetime. Autonomy is granted
+            // per capability, so a denial under a different one says nothing about whether this
+            // grant should stand; and a breach that happened before the grant was issued was
+            // something the person who issued it could have seen.
+            var incidents = await CountIncidentsAsync(grant, now, cancellationToken).ConfigureAwait(false);
+
             var signals = new DemotionSignals
             {
                 KillSwitchEngagedOrUnknown = engagedOrUnknown,
                 WarrantNoLongerValid = !warrantValid,
 
-                // Breaches and failures are not yet counted per capability anywhere in the platform.
-                // Reporting zero would be asserting something nobody measured, so they are reported
-                // as unknown - which demotes. That is the honest reading and the safe one, and it is
-                // recorded here rather than left as a surprise.
-                PolicyBreaches = null,
-                ExecutionFailures = null,
+                // Null when the trail could not be read, never zero. Zero is a measurement; a store
+                // that is down has not measured anything, and unknown demotes.
+                PolicyBreaches = incidents?.PolicyBreaches,
+                ExecutionFailures = incidents?.ExecutionFailures,
                 UnhandledEscalations = unhandled,
                 EvidenceNoLongerJustifies = false,
                 EvidenceAge = now - grant.GrantedAtUtc,
@@ -172,6 +179,53 @@ public sealed class AutonomyCircuitBreaker
                 grant.MaxRiskTier,
                 grant.MaxExposure,
                 nowUtc) is null;
+    }
+
+    /// <summary>
+    /// Denials and failures for this grant's capability since it was issued, or null when the trail
+    /// could not be read.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The window starts at <c>GrantedAtUtc</c> rather than at a rolling interval, and that is the
+    /// substantive choice here. The standard threshold is zero breaches, which is a statement about
+    /// this grant: it was issued on evidence that accounted for none, and one is one more than the
+    /// argument covered. A rolling window would let a breach age out of view and quietly restore a
+    /// grant that the breaker had already found reason to lower - and the breaker only ever lowers,
+    /// so a grant recovering on its own would be a hole in that rule rather than a feature.
+    /// </para>
+    /// <para>
+    /// A store that throws produces unknown, which demotes. Same handling as the escalation count
+    /// below and for the same reason: the moments when a query fails are the moments the platform
+    /// should be doing less.
+    /// </para>
+    /// </remarks>
+    private async Task<CapabilityIncidents?> CountIncidentsAsync(
+        AutonomyGrant grant,
+        DateTime nowUtc,
+        CancellationToken cancellationToken)
+    {
+        if (grant.GrantedAtUtc > nowUtc)
+        {
+            // A grant issued in the future of this sweep is a clock or a data problem, and either
+            // way there is no window to count over. Unknown, which demotes.
+            return null;
+        }
+
+        try
+        {
+            return await _incidents
+                .CountIncidentsAsync(grant.Capability, grant.GrantedAtUtc, nowUtc, cancellationToken)
+                .ConfigureAwait(false);
+        }
+#pragma warning disable CA1031 // Deliberate, exactly as below: a trail that cannot be read must
+                              // produce "unknown" rather than an exception that leaves every grant
+                              // where it was.
+        catch (Exception)
+        {
+            return null;
+        }
+#pragma warning restore CA1031
     }
 
     private async Task<int?> CountUnhandledAsync(DateTime nowUtc, CancellationToken cancellationToken)

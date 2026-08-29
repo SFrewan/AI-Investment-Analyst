@@ -1,0 +1,156 @@
+@page "/portfolio"
+@implements IDisposable
+@inject LocalizationState L
+@inject PlatformClient Client
+@inject RefreshState Refresh
+@inject NavigationManager Navigation
+
+<PageTitle>@L["portfolio.title"] · @L["app.name"]</PageTitle>
+
+<h1>@L["portfolio.title"]</h1>
+
+<DataState Loading="@_loading"
+           Failure="@_failure"
+           IsEmpty="@(_portfolio is { Positions.Count: 0 })"
+           EmptyKey="portfolio.empty"
+           OnRetry="@(() => Refresh.RequestAsync())">
+
+    @if (_portfolio is { } portfolio)
+    {
+        <div class="tiles">
+            <Tile Label="@L["portfolio.totalValue"]"
+                  Value="@(portfolio.TotalValue is { } total ? L.Money(total, portfolio.Currency) : null)"
+                  UnknownKey="portfolio.totalUnavailable" />
+
+            <Tile Label="@L["overview.cash"]" Value="@L.Money(portfolio.Cash, portfolio.Currency)" />
+
+            <Tile Label="@L["portfolio.costBasis"]"
+                  Value="@L.Money(portfolio.CostBasis, portfolio.Currency)" />
+
+            <Tile Label="@L["overview.unrealised"]"
+                  Value="@(portfolio.UnrealisedPnL is { } u ? L.Money(u, portfolio.Currency) : null)"
+                  Tone="@Tone(portfolio.UnrealisedPnL)"
+                  UnknownKey="valuation.NoObservedPrice" />
+
+            <Tile Label="@L["overview.realised"]"
+                  Value="@L.Money(portfolio.RealisedPnL, portfolio.Currency)"
+                  Tone="@Tone(portfolio.RealisedPnL)" />
+        </div>
+
+        @if (!portfolio.IsFullyValued)
+        {
+            @* The platform declined to total the book. Saying why, in its own terms. *@
+            <div class="banner" role="note">
+                <span>
+                    <strong>@L["portfolio.totalUnavailable"].</strong>
+                    @L.Format("portfolio.totalUnavailableWhy", portfolio.UnvaluedPositions, portfolio.OpenPositions)
+                </span>
+            </div>
+        }
+
+        <section class="panel">
+            <div class="panel-head"><h2>@L["nav.portfolio"]</h2></div>
+
+            <div class="table-scroll">
+                <table>
+                    <caption class="visually-hidden">@L["portfolio.title"]</caption>
+                    <thead>
+                        <tr>
+                            <th scope="col">@L["portfolio.instrument"]</th>
+                            <th scope="col" class="num">@L["portfolio.quantity"]</th>
+                            <th scope="col" class="num">@L["portfolio.averageCost"]</th>
+                            <th scope="col" class="num">@L["portfolio.costBasis"]</th>
+                            <th scope="col" class="num">@L["portfolio.currentPrice"]</th>
+                            <th scope="col" class="num">@L["portfolio.marketValue"]</th>
+                            <th scope="col" class="num">@L["overview.unrealised"]</th>
+                            <th scope="col">@L["portfolio.valuation"]</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var position in portfolio.Positions)
+                        {
+                            <tr>
+                                <td>
+                                    <a href="@($"portfolio/{Uri.EscapeDataString(position.Instrument)}")">
+                                        @position.Instrument
+                                    </a>
+                                </td>
+                                <td class="num">@L.Number(position.Quantity, 4)</td>
+                                <td class="num">@Cell(position.AverageCost, portfolio.Currency)</td>
+                                <td class="num">@L.Money(position.CostBasis, portfolio.Currency)</td>
+                                <td class="num">@Cell(position.CurrentPrice, portfolio.Currency)</td>
+                                <td class="num">@Cell(position.MarketValue, portfolio.Currency)</td>
+                                <td class="num @Tone(position.UnrealisedPnL)">
+                                    @Cell(position.UnrealisedPnL, portfolio.Currency)
+                                </td>
+                                <td>
+                                    <span class="chip @ValuationClass(position.PriceAvailability)">
+                                        @L.Label("valuation", position.PriceAvailability)
+                                    </span>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+
+            <p class="panel-note">@L["risk.exposureNote"]</p>
+        </section>
+    }
+</DataState>
+
+@code {
+    private PortfolioDto? _portfolio;
+    private ApiFailure? _failure;
+    private bool _loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Refresh.Requested += LoadAsync;
+        L.Changed += OnChanged;
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+
+        await InvokeAsync(StateHasChanged);
+
+        var result = await Client.GetAsync<PortfolioDto>("api/portfolio");
+
+        _portfolio = result.Value;
+        _failure = result.Failure;
+        _loading = false;
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    /// <summary>A figure, or the not-applicable marker. Never a zero standing in for a gap.</summary>
+    private string Cell(decimal? value, string currency) =>
+        value is null ? L["state.notApplicable"] : L.Money(value, currency);
+
+    private string Tone(decimal? value) => value switch
+    {
+        > 0 => "positive",
+        < 0 => "negative",
+        _ => string.Empty,
+    };
+
+    private static string ValuationClass(string availability) => availability switch
+    {
+        "Available" => "ok",
+        "NoObservedPrice" => "warn",
+        "NotHeld" => "idle",
+        _ => "idle",
+    };
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Refresh.Requested -= LoadAsync;
+        L.Changed -= OnChanged;
+    }
+}

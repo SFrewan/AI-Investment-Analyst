@@ -1,0 +1,28 @@
+@inject LocalizationState L
+
+@*
+    A figure the platform may not have been able to measure.
+
+    An unavailable measurement renders as "not measured" with the platform's own explanation
+    underneath - never as zero, and never styled like a result. Showing 0.00 for an unmeasured hit
+    rate would read as a system that got everything wrong.
+*@
+<Tile Label="@Label"
+      Value="@(Available ? L.Number(Measurement?.Value, 3) : null)"
+      Note="@Note"
+      Small="true"
+      UnknownKey="state.notMeasured" />
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = string.Empty;
+
+    [Parameter] public MeasurementDto? Measurement { get; set; }
+
+    private bool Available =>
+        Measurement is { Value: not null } &&
+        string.Equals(Measurement.Availability, "Available", StringComparison.OrdinalIgnoreCase);
+
+    private string? Note => Available
+        ? $"{L["validation.sampleSize"]}: {L.Number(Measurement!.SampleSize, 0)}"
+        : Measurement?.Explanation;
+}

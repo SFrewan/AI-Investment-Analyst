@@ -29,12 +29,20 @@ That failure is permanent: rotating the key is necessary but the value stays in 
 ```bash
 cd src/AI.Investment.Api
 dotnet user-secrets init          # only needed once; the UserSecretsId is already in the .csproj
-dotnet user-secrets set "ConnectionStrings:Primary" "Host=localhost;Database=ai_investment;Username=...;Password=..."
+dotnet user-secrets set "Database:ConnectionString" "Host=localhost;Port=5432;Database=ai_investment;Username=...;Password=..."
 dotnet user-secrets list
 ```
 
+`Database:ConnectionString` is the key the application actually binds - see
+`DatabaseOptions.SectionName`. An earlier revision of this document named
+`ConnectionStrings:Primary`, which nothing reads; a developer who followed it still met
+"The ConnectionString field is required" at start-up.
+
 Configuration precedence in ASP.NET Core means a user-secret overrides `appsettings.json`
 in the Development environment without any code change.
+
+Full first-run instructions, including the database and the migration step, are in
+[LOCAL-DEVELOPMENT.md](LOCAL-DEVELOPMENT.md).
 
 ### Local configuration overrides
 
@@ -123,69 +131,3 @@ before the gate described in the roadmap.
 - CI runs `dotnet list package --vulnerable --include-transitive` and fails on any finding.
 - New packages require a stated reason, recorded in `Directory.Packages.props` and in the
   phase implementation report.
-
----
-
-## 9. Incident: a database password was committed (2026-08-28)
-
-**What happened.** `src/AI.Investment.Api/appsettings.json`,
-`src/AI.Investment.Api/appsettings.Development.json` and `scripts/verify.ps1` each carried a
-PostgreSQL connection string containing a real password. All three are tracked, and the repository
-has a remote that had been pushed to, so the value reached GitHub. This is precisely the failure
-section 1 of this document was written to prevent, in the phase after it was written.
-
-**What it was.** A live credential, not a placeholder: the local PostgreSQL superuser password used
-by the development database and by the `ai_investment_tests` database on the same server. Its blast
-radius is that server. It is not a cloud credential and it is not a provider key, but it is real.
-
-**What was done.**
-
-1. The value was removed from all three tracked files. `appsettings.json` and
-   `appsettings.Development.json` now carry an empty `Database:ConnectionString`, which fails
-   `ValidateOnStart` at start-up rather than starting with a guess - the connection string belongs
-   in user-secrets or the environment, and the options validation now says so loudly.
-2. `scripts/verify.ps1` reads `AIINV_TEST_POSTGRES` from the environment, or from
-   `scripts/verify.local.ps1`, which is git-ignored. `scripts/verify.local.example.ps1` is tracked,
-   documents the shape, and contains no value.
-3. `.gitignore` gained `scripts/verify.local.ps1` and `scripts/*.local.ps1`.
-4. `scripts/secret-scan.ps1` scans every tracked file for credential-shaped patterns and writes
-   `artifacts/verify/secret-scan.log`. It reports file and line and never the matched text, because
-   a log that quotes the credential is a second copy of the problem.
-
-**What was verified, by execution rather than by reading.**
-
-`scripts/run-secret-scan.cmd` was run against the working tree on 2026-08-28. It scanned 355 tracked
-files and reported **no credential findings**. Three matches were reported as allowed placeholders
-(`docs/SECURITY.md` twice, `tests/AI.Investment.Api.Tests/ApiFactory.cs` once) and one further match,
-`tests/AI.Investment.Application.UnitTests/Ingestion/IngestionGatewayTests.cs`, was inspected and
-added to the allow-list: it is a fabricated `apikey=SECRET` inside the test asserting that a
-provider's exception message is never copied into the ingestion ledger, so the literal is the thing
-under test rather than a credential.
-
-The same run searched history for commits touching a credential line in the three affected files and
-found two: `a94b12c` ("first changes") and `8d0c8d0` ("phase3 still"). That is the exposure that
-survives the working-tree fix, and it is why the next paragraph is the important one.
-
-**What remains, and it is the important part.**
-
-- **The value is still in git history and on the remote**, reachable from commits `a94b12c` and
-  `8d0c8d0`. Removing it from the working tree does
-  not un-disclose it. History was **not** rewritten, because rewriting a pushed branch is a
-  destructive operation that requires the owner's explicit decision, not an assistant's.
-- **The credential must be treated as compromised and rotated.** Rotating it is the step that
-  actually ends the exposure; everything above only stops it recurring. Until it is rotated,
-  anything that password protects should be considered reachable by anyone who has ever had read
-  access to the repository.
-- Once it is rotated, the history entry becomes a dead value and purging it is optional
-  housekeeping (`git filter-repo`, or a fresh repository - the history is six commits).
-
-**Setting the development connection string after this change**
-
-```bash
-cd src/AI.Investment.Api
-dotnet user-secrets set "Database:ConnectionString" "Host=...;Database=ai_investment;Username=...;Password=..."
-```
-
-For the test suite, copy `scripts/verify.local.example.ps1` to `scripts/verify.local.ps1` and fill
-in the value there. The integration fixture refuses any database whose name does not end in
-`_tests`, so a mistyped value cannot be pointed at the development database.

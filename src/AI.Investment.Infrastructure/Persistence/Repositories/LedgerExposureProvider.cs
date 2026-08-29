@@ -2,6 +2,7 @@ using AI.Investment.Application.Abstractions;
 using AI.Investment.Domain.Capital;
 using AI.Investment.Domain.Enums;
 using AI.Investment.Domain.Limits;
+using AI.Investment.Domain.Portfolio;
 using AI.Investment.Domain.ValueObjects;
 using Microsoft.EntityFrameworkCore;
 
@@ -71,6 +72,9 @@ public sealed class LedgerExposureProvider : IExposureProvider
 
         var actionsToday = await ActionsTodayAsync(startOfDay, cancellationToken).ConfigureAwait(false);
 
+        var byInstrument = await ExposureByInstrumentAsync(currency, cancellationToken)
+            .ConfigureAwait(false);
+
         return ExposureSnapshot.Create(
             currency,
             positions.IsNegative ? Money.Zero(currency) : positions,
@@ -79,8 +83,53 @@ public sealed class LedgerExposureProvider : IExposureProvider
             lossesToday.IsNegative ? Money.Zero(currency) : lossesToday,
             Money.Zero(currency),
             actionsToday,
-            exposureByInstrument: null,
+            byInstrument,
             lastRealisedLossAtUtc: lastLoss);
+    }
+
+    /// <summary>
+    /// What is held in each instrument, at cost, replayed from the position events.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This map was <c>null</c> until Block 3, which meant <c>ExposureTo</c> answered zero for every
+    /// instrument and the concentration ceiling could never bind. It now answers from the same
+    /// events the portfolio read model replays, so an operator and the limit engine see one number.
+    /// </para>
+    /// <para>
+    /// <strong>At cost, not at market value, and deliberately.</strong> The total these figures are
+    /// compared against is the ledger's <c>Positions</c> balance, which is at cost; mixing the two
+    /// bases would produce a ratio of two different things. It also means the ceiling does not
+    /// depend on a price being observable - a concentration limit that silently loosened whenever a
+    /// price feed went quiet would be worse than one that could not be computed at all.
+    /// </para>
+    /// <para>
+    /// Positions closed to zero are omitted rather than reported as zero exposure: an instrument
+    /// nothing is held in has no exposure to compare, and an entry of zero would be a claim.
+    /// </para>
+    /// </remarks>
+    private async Task<Dictionary<string, Money>> ExposureByInstrumentAsync(
+        Currency currency,
+        CancellationToken cancellationToken)
+    {
+        var events = await _dbContext.PositionEvents
+            .AsNoTracking()
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        var byInstrument = new Dictionary<string, Money>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var position in PositionCalculator.Replay(events))
+        {
+            if (!position.IsOpen || position.CostBasis.Currency != currency)
+            {
+                continue;
+            }
+
+            byInstrument[position.Instrument] = position.CostBasis;
+        }
+
+        return byInstrument;
     }
 
     /// <summary>Cash plus positions, less what has been spent on fees and lost.</summary>

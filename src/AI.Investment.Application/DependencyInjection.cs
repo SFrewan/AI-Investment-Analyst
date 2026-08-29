@@ -7,12 +7,17 @@ using AI.Investment.Application.Companies.SearchCompanies;
 using AI.Investment.Application.Freshness;
 using AI.Investment.Application.Ingestion;
 using AI.Investment.Application.Normalization;
+using AI.Investment.Application.Abstractions;
 using AI.Investment.Application.Operations;
+using AI.Investment.Application.Operators;
+using AI.Investment.Application.Portfolio;
+using AI.Investment.Application.Opportunities;
 using AI.Investment.Application.Validation;
 using AI.Investment.Application.Retention;
 using AI.Investment.Application.Sources.ActivateSource;
 using AI.Investment.Application.Sources.RegisterKnownSources;
 using AI.Investment.Domain.Actions;
+using AI.Investment.Domain.Opportunities;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace AI.Investment.Application;
@@ -76,6 +81,24 @@ public static class DependencyInjection
         services.AddScoped<TriggerEvaluator>();
         services.AddScoped<OperatingCycleRunner>();
 
+        // ---- The work the loop runs. -----------------------------------------------------------
+        //
+        // Phase 6 shipped no cycle work plan, so every cycle escalated and suspended with "no work
+        // plan is registered" - correct, fail-closed, and productive of nothing for the validation
+        // run to measure. These three are the smallest thing that changes that: one reader of stored
+        // closes, one discoverer that screens them, and one plan that sequences the pass and
+        // proposes recording what it found.
+        //
+        // All scoped, and deliberately: the plan carries the state of the cycle it is driving, and
+        // the discoverer keeps the reason it last found nothing. Neither may be shared between
+        // concurrent cycles.
+        //
+        // What is proposed is a record under OpportunityManagement with no financial effect. Nothing
+        // here places an order, reaches a venue, or raises autonomy.
+        services.AddScoped<PriceSeriesReader>();
+        services.AddScoped<IOpportunityDiscoverer, PriceRecoveryDiscoverer>();
+        services.AddScoped<ICycleWorkPlan, EquityReviewWorkPlan>();
+
         // Issuing, withdrawing and automatically lowering grants. Every method proposes an action
         // under AutonomyAdministration, which an AI proposer is refused structurally.
         services.AddScoped<AutonomyAdministration>();
@@ -102,6 +125,22 @@ public static class DependencyInjection
         services.AddScoped<PromotionService>();
         services.AddScoped<LiveVenueService>();
         services.AddScoped<AutonomyCircuitBreaker>();
+
+        // ---- The operator surface. Development block 1. ---------------------------------------
+        //
+        // Scoped, because it acts on behalf of one authenticated person for the duration of one
+        // request. Every method proposes through the action gateway as ProposedBy.Human, so the
+        // audit record's actor is a person rather than a service - which is the whole reason these
+        // operations did not exist before there was an identity to record.
+        //
+        // Notably absent is anything that approves an action or disengages the kill switch. Both are
+        // documented refusals rather than omissions; see OperatorConsole.
+        services.AddScoped<OperatorConsole>();
+
+        // The portfolio read model. It composes three things that already existed - the position
+        // events, the capital ledger and the point-in-time price read - and stores nothing of its
+        // own, which is why it is a plain scoped service rather than a repository.
+        services.AddScoped<PortfolioReader>();
 
         services.AddScoped<RegisterKnownSourcesHandler>();
         services.AddScoped<ActivateSourceHandler>();

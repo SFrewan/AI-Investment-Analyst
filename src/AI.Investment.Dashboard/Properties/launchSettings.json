@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "AI.Investment.Dashboard": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:53107;http://localhost:53108"
+    }
+  }
+}

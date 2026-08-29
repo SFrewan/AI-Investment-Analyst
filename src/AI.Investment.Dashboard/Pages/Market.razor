@@ -1,0 +1,165 @@
+@page "/market"
+@implements IDisposable
+@inject LocalizationState L
+@inject PlatformClient Client
+@inject RefreshState Refresh
+
+<PageTitle>@L["market.title"] · @L["app.name"]</PageTitle>
+
+<h1>@L["market.title"]</h1>
+
+<div class="banner" role="note">
+    <span>@L["market.timestampNote"]</span>
+</div>
+
+<section class="panel">
+    <div class="panel-head"><h2>@L["market.sources"]</h2></div>
+
+    <DataState Loading="@_loading"
+               Failure="@_sourcesFailure"
+               IsEmpty="@(_sources is { Count: 0 })"
+               OnRetry="@(() => Refresh.RequestAsync())">
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">@L["market.source"]</th>
+                        <th scope="col">@L["operations.capability"]</th>
+                        <th scope="col">@L["market.freshness"]</th>
+                        <th scope="col">@L["market.retrievedAt"]</th>
+                        <th scope="col">@L["opportunities.status"]</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var source in _sources ?? [])
+                    {
+                        var freshness = _freshness?.FirstOrDefault(f =>
+                            string.Equals(f.SourceId, source.Id, StringComparison.Ordinal));
+
+                        <tr>
+                            <td>@source.Name</td>
+                            <td>@string.Join(", ", source.Categories)</td>
+                            <td>
+                                @if (freshness is null)
+                                {
+                                    <span class="unknown">@L["state.unknown"]</span>
+                                }
+                                else
+                                {
+                                    <span class="chip @(freshness.NeedsRefresh ? "warn" : "ok")">
+                                        @freshness.State
+                                    </span>
+                                }
+                            </td>
+                            <td>@L.Instant(freshness?.LastRefreshedAtUtc)</td>
+                            <td>
+                                <span class="chip @(source.IsActive ? "ok" : "idle")">
+                                    @(source.IsActive ? L["market.active"] : L["market.inactive"])
+                                </span>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        @if (_noObservations)
+        {
+            @* The honest headline. Nothing here fabricates a price or implies a live feed. *@
+            <p class="panel-note">@L["market.noObservations"]</p>
+        }
+    </DataState>
+</section>
+
+<section class="panel">
+    <div class="panel-head"><h2>@L["market.runs"]</h2></div>
+
+    <DataState Loading="@_loading"
+               Failure="@_runsFailure"
+               IsEmpty="@(_runs is { Count: 0 })"
+               EmptyKey="market.noObservations">
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th scope="col">@L["market.source"]</th>
+                        <th scope="col">@L["operations.capability"]</th>
+                        <th scope="col">@L["portfolio.instrument"]</th>
+                        <th scope="col">@L["opportunities.status"]</th>
+                        <th scope="col" class="num">@L["opportunities.evidence"]</th>
+                        <th scope="col">@L["market.retrievedAt"]</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var run in _runs ?? [])
+                    {
+                        <tr>
+                            <td>@run.SourceId</td>
+                            <td>@run.Category</td>
+                            <td>@(run.SubjectIdentifier ?? L["state.notApplicable"])</td>
+                            <td><span class="chip @OutcomeClass(run.Outcome)">@run.Outcome</span></td>
+                            <td class="num">@L.Number(run.ArtifactCount, 0)</td>
+                            <td>@L.Instant(run.StartedAtUtc)</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </DataState>
+</section>
+
+@code {
+    private IReadOnlyList<SourceDto>? _sources;
+    private IReadOnlyList<FreshnessDto>? _freshness;
+    private IReadOnlyList<IngestionRunDto>? _runs;
+    private ApiFailure? _sourcesFailure;
+    private ApiFailure? _runsFailure;
+    private bool _loading = true;
+    private bool _noObservations;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Refresh.Requested += LoadAsync;
+        L.Changed += OnChanged;
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+
+        await InvokeAsync(StateHasChanged);
+
+        var sources = await Client.GetAsync<List<SourceDto>>("api/sources");
+        var freshness = await Client.GetAsync<List<FreshnessDto>>("api/data-plane/freshness");
+        var runs = await Client.GetAsync<List<IngestionRunDto>>("api/data-plane/runs");
+
+        _sources = sources.Value;
+        _sourcesFailure = sources.Failure;
+        _freshness = freshness.Value;
+        _runs = runs.Value;
+        _runsFailure = runs.Failure;
+
+        // "The window has not started" is a fact about the data, read from the data - not inferred
+        // from a connector being configured or a source being registered.
+        _noObservations = _freshness is null || !_freshness.Any(f => f.LastRefreshedAtUtc is not null);
+
+        _loading = false;
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private static string OutcomeClass(string outcome) =>
+        outcome.Contains("Success", StringComparison.OrdinalIgnoreCase) ? "ok"
+        : outcome.Contains("Refus", StringComparison.OrdinalIgnoreCase) ? "warn"
+        : "bad";
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Refresh.Requested -= LoadAsync;
+        L.Changed -= OnChanged;
+    }
+}

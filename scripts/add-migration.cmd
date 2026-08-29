@@ -19,10 +19,15 @@ REM  exported as Database__ConnectionString for this process only. Scaffolding a
 REM  migration needs a well-formed connection string rather than a reachable
 REM  server: nothing here connects to anything.
 REM
+REM  CONFIGURATION. Release, deliberately. The EF tool builds Debug by default, and a locally
+REM  running API holds its own Debug output open - so scaffolding a migration while the application
+REM  is running failed with a file-copy error that said nothing about migrations. Release is the
+REM  configuration the verify scripts already build, so the tooling reuses that output.
+REM
 REM  Everything it writes lands in artifacts\verify, which .gitignore excludes.
 REM ---------------------------------------------------------------------------
 setlocal
-set MIGRATION_NAME=Phase8BoundedAutonomy
+set MIGRATION_NAME=Block3PositionAndPortfolio
 cd /d "%~dp0.."
 if not exist "artifacts\verify" mkdir "artifacts\verify"
 > "artifacts\verify\migration.log" echo [migration] %MIGRATION_NAME% started %DATE% %TIME% in "%CD%"
@@ -44,7 +49,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
   "$cs = $env:AIINV_DESIGNTIME_DB; if ([string]::IsNullOrWhiteSpace($cs)) { $cs = $env:AIINV_TEST_POSTGRES };" ^
   "if ([string]::IsNullOrWhiteSpace($cs)) { Write-Host '[migration] no local connection string; set AIINV_DESIGNTIME_DB or create scripts\verify.local.ps1'; exit 2 };" ^
   "$env:Database__ConnectionString = $cs;" ^
-  "dotnet ef migrations add %MIGRATION_NAME% --project src\AI.Investment.Infrastructure --startup-project src\AI.Investment.Api --context AppDbContext --output-dir Persistence\Migrations;" ^
+  "dotnet ef migrations add %MIGRATION_NAME% --project src\AI.Investment.Infrastructure --startup-project src\AI.Investment.Api --context AppDbContext --output-dir Persistence\Migrations --configuration Release;" ^
   "exit $LASTEXITCODE" >> "artifacts\verify\migration.log" 2>&1
 
 >> "artifacts\verify\migration.log" echo [migration] finished exit=%ERRORLEVEL% %DATE% %TIME%

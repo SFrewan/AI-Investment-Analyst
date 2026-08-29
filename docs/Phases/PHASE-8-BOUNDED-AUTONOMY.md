@@ -97,10 +97,16 @@ evidence stale. The most serious true one is what gets recorded on the grant.
 - **It ignores attended grants.** Demoting those on a transient signal would turn a platform that asks
   permission into one that has quietly stopped proposing anything.
 
-Today the breaker demotes any unattended grant it finds on its first sweep, because policy breaches
-and execution failures are not counted per capability anywhere in the platform and are therefore
-reported as unknown. That is recorded in the code rather than left as a surprise, and counting them is
-the prerequisite for any real promotion.
+Its signals are now counted. `IAuditStatistics` reads the audit trail - the record that already
+exists, rather than a second ledger that could drift from it - and returns, for one capability over
+one window, how many actions policy refused and how many authorised effects threw. The window is the
+grant's own lifetime: the standard threshold is zero breaches, which is a statement about *this*
+grant, and a rolling window would let a breach age out of view and quietly restore autonomy the
+breaker had already found reason to lower.
+
+An approval requirement is deliberately not a breach. Counting one would demote every grant on a
+platform behaving exactly as designed. A store that cannot answer still produces unknown, and unknown
+still demotes.
 
 ## 5. The live-venue gate
 
@@ -199,14 +205,13 @@ recommendation from Phase 7.
 
 In order, and none of them are code:
 
-1. **Data.** Ingested price history and opportunities that cite their evidence by the identifiers of
-   stored observations, so Phase 7's guard can admit anything at all.
+1. ~~**Data.**~~ **The machinery to produce it — done.** See §11. What remains is an operator
+   pointing it at a licensed price history and letting it run.
 2. **Time.** A thirty-day horizon needs thirty days.
 3. **A report that clears the bar** in §2 of `PHASE-7-VALIDATION.md` and `PromotionCriteria.Standard`
    here — including at least thirty shadow divergences with known outcomes, which is the only evidence
    that bears on whether acting more often would have been right.
-4. **Counted breaches and failures per capability**, so the circuit breaker's signals stop arriving as
-   unknown.
+4. ~~**Counted breaches and failures per capability.**~~ **Done.** See §4 and §11.
 5. **A person**, to issue the warrant and to sign the grant.
 
 ## 10. Safety boundary
@@ -215,9 +220,53 @@ Unchanged. Autonomy remains **L3**. The only execution venue in the solution rep
 `Capability.FinancialExecution` is refused unconditionally and structurally, no grant or warrant can
 be issued for it, and no live credential, live venue or real-money path was introduced.
 
-## 11. Recommended next phase
+## 11. The observation-window prerequisites
+
+Phase 8 shipped a promotion gate with nothing to weigh. Three things were missing, and all three were
+absences of production capability rather than of safety machinery, so closing them changed no gate,
+no policy and no autonomy level. Everything below still runs at **L3**.
+
+| Gap | What was added |
+|---|---|
+| No price history | `PriceHistoryFileProvider` + `PriceHistorySource` + `DailyClosePriceNormalizer` — a connector at the same `IDataProvider` seam as EDGAR, reading a licensed export the operator names, producing canonical `security.close` observations. |
+| No cycle work, no discoverer | `PriceRecoveryRule` (pure, in the domain), `PriceRecoveryDiscoverer` (the first `IOpportunityDiscoverer`), `EquityReviewWorkPlan` (the first `ICycleWorkPlan`), and `PriceSeriesReader` shared by both. |
+| No breaker signals | `IAuditStatistics` / `EfAuditStatistics`, wired into `AutonomyCircuitBreaker`. |
+
+**The market-data transport is a directory, and that is a decision rather than a shortcut.** Every
+usable source of daily closes is licensed, and choosing one is a commercial commitment this
+repository will not make on an operator's behalf — the same reason EDGAR was the first connector.
+So the operator points the connector at the export they already pay for and states the terms in
+configuration; the registry records those terms rather than terms this code invented, and the
+connector refuses to be enabled without them. A vendor API later is one more `IDataProvider` and a
+normaliser for that vendor's wire format.
+
+**Nothing invents a number.** A missing price file throws rather than answering empty; a single
+unreadable row quarantines the whole payload rather than leaving an invisible hole in a series; and
+the screen refuses outright when it cannot count a base rate, rather than stating a probability
+nobody measured. An opportunity's entry price is the latest close, its target is the highest close
+the series contains — a price the instrument actually traded at, not a forecast — and its success
+probability is the proportion of past occurrences of the same condition, in the same series, that
+recovered inside the horizon. Each past occurrence is measured against the peak that existed *then*;
+a test asserts the refusal that only a running peak produces.
+
+**What the work plan proposes is a record, not a trade.** `Capability.OpportunityManagement`, no
+financial effect, no venue, no order, no position sizing. The opportunity reaches the repository only
+inside the effect the gateway invokes, so a denied candidate leaves no row.
+
+Verified by execution: **1774 total, 1774 passed, 0 failed, 0 skipped** (up from 1684), 0 warnings,
+secret scan 0 findings. The mutation gate was not re-run: it covers seventeen files that decide
+whether something is allowed to happen, and none of them changed.
+
+## 12. Recommended next phase
 
 None. §P ends at Phase 8, and Phase 8's own exit criterion — *a named, narrow capability runs at L4 for
 a defined period with zero policy breaches* — cannot be attempted until the evidence exists. The work
 that matters next is the data plane running long enough to produce a validation report worth reading,
 not another phase of architecture.
+
+With §11 closed, that is now a matter of configuration and time rather than of code: point the
+price-history connector at a licensed export, activate the source, register a watch on each
+instrument against the `equity-price-review` template, configure a policy for
+`Capability.OpportunityManagement` so the seam can record what the cycles find, and let it run.
+Nothing in that list raises autonomy, and none of it can: the promotion gate reads the report the
+window produces, and it will refuse until the report says otherwise.

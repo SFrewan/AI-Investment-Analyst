@@ -10,6 +10,7 @@ using AI.Investment.Domain.Normalization;
 using AI.Investment.Domain.Observations;
 using AI.Investment.Domain.Operations;
 using AI.Investment.Domain.Opportunities;
+using AI.Investment.Domain.Portfolio;
 using AI.Investment.Domain.Retention;
 using AI.Investment.Domain.Shadow;
 using AI.Investment.Domain.Sources;
@@ -143,6 +144,16 @@ public sealed class AppDbContext : DbContext
     public DbSet<OutboxMessage> OutboxMessages => Set<OutboxMessage>();
 
     /// <summary>
+    /// The record of how each fill moved a holding. Append-only, one row per venue reference.
+    /// </summary>
+    /// <remarks>
+    /// There is no positions table. A holding is replayed from these rows, exactly as a balance is
+    /// projected from ledger entries - a stored quantity can be wrong while every event behind it is
+    /// right, and nothing in the data would say so.
+    /// </remarks>
+    public DbSet<PositionEvent> PositionEvents => Set<PositionEvent>();
+
+    /// <summary>
     /// Commits domain changes. Throws <see cref="UnauthorizedWriteException"/> unless the
     /// Action/Policy seam has opened an authorisation window.
     /// </summary>
@@ -242,25 +253,47 @@ public sealed class AppDbContext : DbContext
                 $"Attempted: {string.Join(", ", tamperedOperations)}.");
         }
 
-        // THIRD, and for the third time for the same reason. A promotion warrant and a live-venue
-        // authorisation are the records of what somebody permitted and why; they are withdrawn by
-        // setting a revocation on the row, never by removing it. A deletion here would erase the
-        // account of a permission that was once in force, which is the only account anybody would
-        // have afterwards. Phase 8.
-        var erasedPermissions = ChangeTracker
+        // THIRD. A position event is the record of how a fill moved a holding, and a holding is
+        // replayed from nothing else. Editing one would edit a quantity, a cost and a realised
+        // profit at once, silently and with no counter-entry anywhere - the capital ledger beside
+        // it cannot be edited, so this must not be either. Unlike the seam's own bookkeeping it is
+        // NOT exempt from needing an authorisation to be created: a fill moves money, and a write
+        // that no decision authorised is exactly what the guard below exists to refuse. Block 3.
+        var rewrittenPositions = ChangeTracker
             .Entries()
-            .Where(e => e.State == EntityState.Deleted)
-            .Where(e => IsPermissionRecord(e))
+            .Where(e => e.State is EntityState.Modified or EntityState.Deleted)
+            .Where(IsPositionRecord)
             .Select(Describe)
             .Distinct(StringComparer.Ordinal)
             .ToList();
 
-        if (erasedPermissions.Count > 0)
+        if (rewrittenPositions.Count > 0)
+        {
+            throw new UnauthorizedWriteException(
+                "Position events are append-only: a holding is replayed from them, so modifying or " +
+                "deleting one rewrites a quantity, a cost and a realised profit at once. " +
+                $"Attempted: {string.Join(", ", rewrittenPositions)}.");
+        }
+
+        // FOURTH, and for the fourth time for the same reason. A promotion warrant and a live-venue
+        // authorisation are the records of what somebody permitted and why; they are withdrawn by
+        // setting a revocation on the row, never by removing it. A deletion here would erase the
+        // account of a privilege that was once in force, which is the only account anybody would
+        // have afterwards. Phase 8.
+        var erasedPrivileges = ChangeTracker
+            .Entries()
+            .Where(e => e.State == EntityState.Deleted)
+            .Where(e => IsPrivilegeRecord(e))
+            .Select(Describe)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (erasedPrivileges.Count > 0)
         {
             throw new UnauthorizedWriteException(
                 "Promotion warrants and live-venue authorisations are withdrawn by revoking them, " +
-                "never by deleting them. The record of a permission that was once in force is the " +
-                $"only account anybody has of it. Attempted: {string.Join(", ", erasedPermissions)}.");
+                "never by deleting them. The record of a privilege that was once in force is the " +
+                $"only account anybody has of it. Attempted: {string.Join(", ", erasedPrivileges)}.");
         }
 
         if (_writeAuthorization.IsAuthorized)
@@ -338,7 +371,7 @@ public sealed class AppDbContext : DbContext
     /// </para>
     /// <para>
     /// <see cref="AutonomyGrant"/> is deliberately absent, and so is <see cref="Watch"/>. A grant is
-    /// the permission itself and a watch is a standing instruction to spend money; creating either
+    /// the privilege itself and a watch is a standing instruction to spend money; creating either
     /// is ordinary domain state and goes through the seam like anything else. Only a watch's record
     /// of having fired is progress, and that appears in <see cref="IsProgressUpdate"/> alone.
     /// </para>
@@ -353,12 +386,16 @@ public sealed class AppDbContext : DbContext
     /// <remarks>
     /// Deliberately narrower than the operations category. A warrant may be revoked and an
     /// authorisation withdrawn - both of which are ordinary modifications of an existing row - so
-    /// only deletion is refused here. What must survive is the fact that the permission existed.
+    /// only deletion is refused here. What must survive is the fact that the privilege existed.
     /// </remarks>
-    private static bool IsPermissionRecord(EntityEntry entry) =>
+    private static bool IsPrivilegeRecord(EntityEntry entry) =>
         entry.Entity is PromotionWarrant or LiveVenueAuthorization ||
         RootOwnerType(entry) == typeof(PromotionWarrant) ||
         RootOwnerType(entry) == typeof(LiveVenueAuthorization);
+
+    /// <summary>A position event, or one of its owned money values.</summary>
+    private static bool IsPositionRecord(EntityEntry entry) =>
+        entry.Entity is PositionEvent || RootOwnerType(entry) == typeof(PositionEvent);
 
     private static bool IsOperationsType(Type? type) =>
         type == typeof(OperatingCycle) ||
@@ -415,6 +452,7 @@ public sealed class AppDbContext : DbContext
             OperatingCycle => CycleProgressFields,
             OutboxMessage => OutboxDeliveryFields,
             Watch => WatchFiringFields,
+            Escalation => EscalationAnswerFields,
             _ => Array.Empty<string>(),
         };
 
@@ -457,6 +495,32 @@ public sealed class AppDbContext : DbContext
         nameof(OutboxMessage.LastError),
         nameof(OutboxMessage.LeaseOwner),
         nameof(OutboxMessage.LeaseExpiresAtUtc),
+    ];
+
+    /// <summary>
+    /// The four columns answering an escalation writes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An escalation exists to be answered, and until this list existed it could not be: every
+    /// modification of an operations record is refused unless its changed columns are on one of
+    /// these allow-lists, and an escalation had none. <c>Acknowledge</c> and <c>Resolve</c> were
+    /// implemented in the domain, tested there, and would have thrown at the database. The operator
+    /// surface is the first thing to call them, and this is what lets the call commit.
+    /// </para>
+    /// <para>
+    /// Deliberately these four and nothing else. The question that was raised, the capability it was
+    /// raised under, when it was raised and when it expires all stay immutable - an escalation whose
+    /// expiry could be pushed out is an escalation that is never unhandled, and the count of
+    /// unhandled escalations is one of the measurements unattended operation is judged on.
+    /// </para>
+    /// </remarks>
+    private static readonly string[] EscalationAnswerFields =
+    [
+        nameof(Escalation.AcknowledgedAtUtc),
+        nameof(Escalation.AcknowledgedBy),
+        nameof(Escalation.ResolvedAtUtc),
+        nameof(Escalation.Resolution),
     ];
 
     /// <summary>

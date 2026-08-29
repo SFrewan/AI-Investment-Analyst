@@ -1,0 +1,112 @@
+@page "/"
+@implements IDisposable
+@inject LocalizationState L
+@inject PlatformClient Client
+@inject RefreshState Refresh
+
+<PageTitle>@L["overview.title"] · @L["app.name"]</PageTitle>
+
+<h1>@L["overview.title"]</h1>
+
+<div class="banner">
+    <span><strong>@L["overview.autonomy"]:</strong> @L["safety.l3"]</span>
+    <span><strong>@L["overview.liveExecution"]:</strong> @L["safety.liveExecutionUnavailable"]</span>
+    <span>
+        <strong>@L["overview.observationWindow"]:</strong>
+        @(_windowActive ? L["overview.windowActive"] : L["overview.windowInactive"])
+    </span>
+</div>
+
+<DataState Loading="@_loading" Failure="@_portfolioFailure" OnRetry="@(() => Refresh.RequestAsync())">
+    <div class="tiles">
+        <Tile Label="@L["overview.portfolioValue"]"
+              Value="@(_portfolio?.TotalValue is { } total ? L.Money(total, _portfolio.Currency) : null)"
+              Note="@(_portfolio is { IsFullyValued: false } ? L["portfolio.totalUnavailable"] : null)" />
+
+        <Tile Label="@L["overview.cash"]"
+              Value="@(_portfolio is null ? null : L.Money(_portfolio.Cash, _portfolio.Currency))" />
+
+        <Tile Label="@L["overview.openPositions"]"
+              Value="@(_portfolio is null ? null : L.Number(_portfolio.OpenPositions, 0))" />
+
+        <Tile Label="@L["overview.unrealised"]"
+              Value="@(_portfolio?.UnrealisedPnL is { } pnl ? L.Money(pnl, _portfolio.Currency) : null)"
+              Tone="@Tone(_portfolio?.UnrealisedPnL)"
+              UnknownKey="valuation.NoObservedPrice" />
+
+        <Tile Label="@L["overview.realised"]"
+              Value="@(_portfolio is null ? null : L.Money(_portfolio.RealisedPnL, _portfolio.Currency))"
+              Tone="@Tone(_portfolio?.RealisedPnL)" />
+
+        <Tile Label="@L["overview.opportunities"]"
+              Value="@(_opportunities is null ? null : L.Number(_opportunities.Count, 0))" />
+
+        <Tile Label="@L["overview.escalations"]"
+              Value="@(_escalations is null ? null : L.Number(_openEscalations, 0))"
+              Tone="@(_openEscalations > 0 ? "negative" : string.Empty)" />
+    </div>
+</DataState>
+
+@code {
+    private PortfolioDto? _portfolio;
+    private IReadOnlyList<OpportunityDto>? _opportunities;
+    private IReadOnlyList<EscalationDto>? _escalations;
+    private ApiFailure? _portfolioFailure;
+    private bool _loading = true;
+    private bool _windowActive;
+    private int _openEscalations;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Refresh.Requested += LoadAsync;
+        L.Changed += OnChanged;
+
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        _loading = true;
+
+        await InvokeAsync(StateHasChanged);
+
+        var portfolio = await Client.GetAsync<PortfolioDto>("api/portfolio");
+
+        _portfolio = portfolio.Value;
+        _portfolioFailure = portfolio.Failure;
+
+        // These two are read-only extras: a failure on either is reported as an unavailable tile
+        // rather than as a failed page, because the portfolio is what this page is about.
+        _opportunities = (await Client.GetAsync<List<OpportunityDto>>("api/opportunities")).Value;
+
+        var escalations = await Client.GetAsync<List<EscalationDto>>("api/operations/escalations");
+
+        _escalations = escalations.Value;
+        _openEscalations = escalations.Value?.Count(e => e.ResolvedAtUtc is null) ?? 0;
+
+        // The window is active only if the platform actually holds an observation. Nothing here
+        // infers it from a connector being configured.
+        var freshness = await Client.GetAsync<List<FreshnessDto>>("api/data-plane/freshness");
+
+        _windowActive = freshness.Value?.Exists(f => f.LastRefreshedAtUtc is not null) ?? false;
+
+        _loading = false;
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private string Tone(decimal? value) => value switch
+    {
+        > 0 => "positive",
+        < 0 => "negative",
+        _ => string.Empty,
+    };
+
+    private void OnChanged() => InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        Refresh.Requested -= LoadAsync;
+        L.Changed -= OnChanged;
+    }
+}
