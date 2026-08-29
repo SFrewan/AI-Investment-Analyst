@@ -82,9 +82,22 @@ public sealed class OperatingCycleHostedService : BackgroundService
             var provider = scope.ServiceProvider;
             var store = provider.GetRequiredService<ICycleStore>();
             var runner = provider.GetRequiredService<OperatingCycleRunner>();
+            var ticker = provider.GetRequiredService<ScheduleTicker>();
             var clock = provider.GetRequiredService<IClock>();
             var worker = Environment.MachineName + ":" + Environment.ProcessId.ToString(
                 System.Globalization.CultureInfo.InvariantCulture);
+
+            // Schedules first, then drain. A watch that came due this instant should have its cycle
+            // considered in the same pass rather than waiting for the next one - and starting a
+            // cycle is cheap, because the cycle is a persisted state machine that this pass may or
+            // may not get to.
+            var tick = await ticker.TickAsync(cancellationToken).ConfigureAwait(false);
+
+            if (tick.Due > 0 || tick.Started > 0)
+            {
+                OperationsLog.SchedulePass(
+                    _logger, tick.Examined, tick.Due, tick.Offered, tick.Started, tick.Suppressed);
+            }
 
             var runnable = await store
                 .GetRunnableAsync(batchSize, clock.UtcNow, cancellationToken)
@@ -250,6 +263,19 @@ internal static partial class OperationsLog
         Message = "An operating-cycle pass failed. The timer continues; leases expire and the next " +
                   "pass picks up whatever this one did not finish.")]
     internal static partial void CyclePassFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(
+        EventId = 2205,
+        Level = LogLevel.Information,
+        Message = "Schedule pass: examined {Examined}, due {Due}, offered {Offered}, " +
+                  "started {Started}, suppressed {Suppressed}.")]
+    internal static partial void SchedulePass(
+        ILogger logger,
+        int examined,
+        int due,
+        int offered,
+        int started,
+        int suppressed);
 
     [LoggerMessage(
         EventId = 2210,

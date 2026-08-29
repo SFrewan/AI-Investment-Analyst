@@ -292,6 +292,112 @@ public sealed class WriteGuardTests : IAsyncLifetime
     }
 
 
+    /// <summary>
+    /// The case that stopped the first live cycle: a run recorded when nothing is authorised.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An ingestion run is exempt from needing a window for the same reason an audit record is -
+    /// a refused run has to be recordable precisely when no authorisation exists. But EF tracks an
+    /// owned value as its own entry, so the run's <c>IngestionRequest</c> and that request's
+    /// <c>IngestionSubject</c> arrive at the guard as separate rows. Matching the exemption on an
+    /// entry's own CLR type let the run through and refused its two owned rows, and the live cycle
+    /// died with <c>IngestionRequest:Added, IngestionSubject:Added</c> after the fetch had already
+    /// succeeded.
+    /// </para>
+    /// <para>
+    /// This is the test that was missing. Every other exempt aggregate is flat, so nothing else in
+    /// the suite could have caught it.
+    /// </para>
+    /// </remarks>
+    [SkippableFact]
+    public async Task An_ingestion_run_can_be_recorded_when_nothing_is_authorised()
+    {
+        Skip.IfNot(_fixture.Available, _fixture.UnavailableReason);
+
+        await using var context = _fixture.CreateContext(new ScopedWriteAuthorization());
+
+        var run = NewRun();
+        run.MarkSucceeded(Now);
+
+        await new Infrastructure.Persistence.Repositories.EfIngestionRunStore(context)
+            .RecordAsync(run);
+
+        await using var verification = _fixture.CreateContext(new ScopedWriteAuthorization());
+        var stored = await verification.IngestionRuns.FirstOrDefaultAsync(r => r.Id == run.Id);
+
+        Assert.NotNull(stored);
+        Assert.Equal(Domain.Ingestion.IngestionOutcome.Succeeded, stored!.Outcome);
+
+        // The owned rows are the point: the run is worthless without the request it describes.
+        Assert.Equal("AAPL.US", stored.Request.Subject.Identifier);
+    }
+
+    /// <summary>
+    /// The exemption is not a bypass. A run still has to be written through its store.
+    /// </summary>
+    /// <remarks>
+    /// Guards the widening: now that owned rows walk up to their exempt aggregate, the seam's
+    /// single-path rule is the only thing left stopping application code from adding a run
+    /// directly and calling the public save. It still stops it.
+    /// </remarks>
+    [SkippableFact]
+    public async Task An_ingestion_run_added_directly_must_still_go_through_its_store()
+    {
+        Skip.IfNot(_fixture.Available, _fixture.UnavailableReason);
+
+        await using var context = _fixture.CreateContext(new ScopedWriteAuthorization());
+
+        context.IngestionRuns.Add(NewRun());
+
+        var exception = await Assert.ThrowsAsync<UnauthorizedWriteException>(
+            () => context.SaveChangesAsync());
+
+        Assert.Contains("through their stores", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The ingestion ledger is append-only too, and stays so inside an open window.
+    /// </summary>
+    [SkippableFact]
+    public async Task An_ingestion_run_cannot_be_modified_even_inside_an_authorisation_window()
+    {
+        Skip.IfNot(_fixture.Available, _fixture.UnavailableReason);
+
+        var authorization = new ScopedWriteAuthorization();
+        await using var context = _fixture.CreateContext(authorization);
+
+        var run = NewRun();
+        run.MarkSucceeded(Now);
+
+        await new Infrastructure.Persistence.Repositories.EfIngestionRunStore(context)
+            .RecordAsync(run);
+
+        var tracked = await context.IngestionRuns.FirstAsync(r => r.Id == run.Id);
+
+        using (authorization.Authorize(SeamTestDecisions.ExecuteDecision(Now)))
+        {
+            context.Entry(tracked).State = EntityState.Modified;
+
+            var exception = await Assert.ThrowsAsync<UnauthorizedWriteException>(
+                () => context.SaveChangesAsync());
+
+            Assert.Contains("append-only", exception.Message, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>The shape of run the live cycle produces: one equity, one price source.</summary>
+    private static Domain.Ingestion.IngestionRun NewRun() =>
+        Domain.Ingestion.IngestionRun.Start(
+            Domain.Ingestion.IngestionRequest.Create(
+                Domain.Sources.SourceId.Create("eodhd-eod"),
+                Domain.Sources.DataCategory.MarketPrices,
+                Domain.Sources.Region.Global,
+                Domain.Ingestion.IngestionSubject.Create("Equity", "AAPL.US"),
+                CorrelationId.New(),
+                Now),
+            Now);
+
     private static Company NewCompany(Ticker ticker) =>
         Company.Create(CompanyId.New(), $"Test {ticker.Value}", ticker, Now);
 

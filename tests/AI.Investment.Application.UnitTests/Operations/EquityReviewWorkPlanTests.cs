@@ -1,4 +1,5 @@
 using AI.Investment.Application.Abstractions;
+using AI.Investment.Application.Ingestion;
 using AI.Investment.Application.Operations;
 using AI.Investment.Application.Opportunities;
 using AI.Investment.Application.UnitTests.Autonomy;
@@ -11,6 +12,7 @@ using AI.Investment.Domain.Ingestion;
 using AI.Investment.Domain.Operations;
 using AI.Investment.Domain.Opportunities;
 using AI.Investment.Domain.Opportunities.Equity;
+using AI.Investment.Domain.Sources;
 using AI.Investment.Domain.ValueObjects;
 using AI.Investment.Domain.Watching;
 using Xunit;
@@ -48,8 +50,14 @@ public sealed class EquityReviewWorkPlanTests
     private static readonly decimal[] AlwaysRising =
         [100m, 101m, 102m, 103m, 104m, 105m, 106m, 107m];
 
+    /// <summary>
+    /// Blank price source: these tests seed the observation store directly, which is exactly the
+    /// "data arrives some other way" arrangement the setting describes. The acquisition path has
+    /// its own tests below.
+    /// </summary>
     private static readonly DiscoverySettings Settings = new()
     {
+        PriceSourceId = "",
         Rule = new PriceRecoveryParameters(
             MinimumSessions: 5,
             DrawdownRatio: 0.10m,
@@ -63,6 +71,7 @@ public sealed class EquityReviewWorkPlanTests
     private readonly RecordingOpportunityRepository _repository = new();
     private readonly NoOpUnitOfWork _unitOfWork = new();
     private readonly FakeClock _clock = new(Now);
+    private readonly RecordingAcquisition _acquisition = new();
 
     // ---- a pass that finds something -----------------------------------------------------------
 
@@ -298,18 +307,167 @@ public sealed class EquityReviewWorkPlanTests
             FirstSession,
             closes));
 
-    private EquityReviewWorkPlan Plan() =>
-        new(
+    // ---- acquisition: the cycle fetches before it screens --------------------------------------
+
+    /// <summary>
+    /// The gap this closes. Before this, Collect read storage that nothing ever filled.
+    /// </summary>
+    [Fact]
+    public async Task A_pass_acquires_from_the_configured_source_before_it_screens()
+    {
+        Seed(FallsAndRecovers);
+
+        var (_, result) = await RunCollectAsync(StartCycle(), Acquiring());
+
+        var request = Assert.Single(_acquisition.Requests);
+
+        Assert.Equal("eodhd-eod", request.SourceId.Value);
+        Assert.Equal(DataCategory.MarketPrices, request.Category);
+        Assert.Equal("Security", request.Subject.Kind);
+        Assert.Equal("AAPL", request.Subject.Identifier);
+
+        // No window: the screen counts a base rate over months, and a narrowed request would
+        // produce a series too short to evidence anything.
+        Assert.Null(request.Window);
+
+        // Counted against the cycle's provider-call budget, and no model spend.
+        Assert.Equal(1, result.ProviderCalls);
+        Assert.Equal(0m, result.ModelSpend.Amount);
+        Assert.False(result.ProviderFailed);
+    }
+
+    [Fact]
+    public async Task A_successful_acquisition_leaves_the_pass_able_to_propose_a_candidate()
+    {
+        Seed(FallsAndRecovers);
+
+        var proposal = await DriveAsync(Plan(Acquiring()), StartCycle());
+
+        Assert.NotNull(proposal);
+        Assert.Single(_acquisition.Requests);
+    }
+
+    /// <summary>
+    /// A refusal is the gateway's answer, not an exception. The stage fails, nothing is screened,
+    /// and the obstacle names the source - because "the licence does not permit this" and "the
+    /// series simply has not fallen" are different facts.
+    /// </summary>
+    [Fact]
+    public async Task A_refused_acquisition_fails_the_stage_and_screens_nothing()
+    {
+        Seed(FallsAndRecovers);
+
+        _acquisition.Refuse("data-plane.source-active@1", "Source 'eodhd-eod' is not active.");
+
+        var (plan, result) = await RunCollectAsync(StartCycle(), Acquiring());
+
+        Assert.True(result.ProviderFailed);
+        Assert.Equal(1, result.ProviderCalls);
+
+        // The obstacle names the source and relays the run's own reason, so a licensing refusal is
+        // not reported as "the series has not fallen".
+        Assert.Contains("eodhd-eod", plan.Obstacle, StringComparison.Ordinal);
+        Assert.Contains("not active", plan.Obstacle, StringComparison.Ordinal);
+        Assert.Empty(_repository.All);
+    }
+
+    [Fact]
+    public async Task A_failed_acquisition_fails_the_stage_and_proposes_nothing()
+    {
+        Seed(FallsAndRecovers);
+
+        _acquisition.Fail("the provider returned 503 three times.");
+
+        var proposal = await DriveAsync(Plan(Acquiring()), StartCycle());
+
+        Assert.Null(proposal);
+        Assert.Empty(_repository.All);
+    }
+
+    /// <summary>
+    /// A fetch that succeeded but delivered nothing usable is not a failure - it is a pass with no
+    /// evidence, which is the existing empty-observation behaviour and must stay distinguishable
+    /// from a refusal.
+    /// </summary>
+    [Fact]
+    public async Task A_successful_acquisition_that_stored_nothing_proposes_nothing_without_failing()
+    {
+        // Nothing seeded: the fetch succeeded and the store is still empty.
+        var (_, result) = await RunCollectAsync(StartCycle(), Acquiring());
+
+        Assert.False(result.ProviderFailed);
+        Assert.Equal(1, result.ProviderCalls);
+    }
+
+    [Fact]
+    public async Task A_pass_with_no_stored_observations_proposes_nothing()
+    {
+        var proposal = await DriveAsync(Plan(Acquiring()), StartCycle());
+
+        Assert.Null(proposal);
+        Assert.Single(_acquisition.Requests);
+        Assert.Empty(_repository.All);
+    }
+
+    /// <summary>Blank source: screen what is stored, call nobody. The pre-existing arrangement.</summary>
+    [Fact]
+    public async Task No_configured_price_source_screens_what_is_stored_and_calls_no_provider()
+    {
+        Seed(FallsAndRecovers);
+
+        var (_, result) = await RunCollectAsync(StartCycle(), Settings);
+
+        Assert.Empty(_acquisition.Requests);
+        Assert.Equal(0, result.ProviderCalls);
+        Assert.False(result.ProviderFailed);
+
+        var proposal = await DriveAsync(Plan(), StartCycle("trigger-second"));
+
+        Assert.NotNull(proposal);
+        Assert.Empty(_acquisition.Requests);
+    }
+
+    /// <summary>
+    /// The plan reaches a provider only through IDataAcquisition, which is the gated path. No HTTP
+    /// client, no connector, no vendor type reaches this class.
+    /// </summary>
+    [Fact]
+    public void The_plan_reaches_a_provider_only_through_the_gated_acquisition_path()
+    {
+        var dependencies = typeof(EquityReviewWorkPlan)
+            .GetConstructors()
+            .Single()
+            .GetParameters()
+            .Select(p => p.ParameterType.Name)
+            .ToList();
+
+        Assert.Contains("IDataAcquisition", dependencies, StringComparer.Ordinal);
+
+        Assert.DoesNotContain(dependencies, name =>
+            name.Contains("Http", StringComparison.Ordinal) ||
+            name.Contains("Eodhd", StringComparison.Ordinal) ||
+            name.Contains("IDataProvider", StringComparison.Ordinal));
+    }
+
+    private EquityReviewWorkPlan Plan(DiscoverySettings? settings = null)
+    {
+        var effective = settings ?? Settings;
+
+        return new EquityReviewWorkPlan(
             _cycles,
             _watches,
-            [new PriceRecoveryDiscoverer(new PriceSeriesReader(_observations), Settings)],
+            [new PriceRecoveryDiscoverer(new PriceSeriesReader(_observations), effective)],
             [new EquityEvidenceRequirement()],
             [new EquityEconomicsCalculator()],
             new PriceSeriesReader(_observations),
-            Settings,
+            _acquisition,
+            effective,
             _repository,
             _unitOfWork,
             _clock);
+    }
+
+    private static DiscoverySettings Acquiring() => Settings with { PriceSourceId = "eodhd-eod" };
 
     private OperatingCycle StartCycle(string triggerKey = "trigger-aapl")
     {
@@ -338,6 +496,77 @@ public sealed class EquityReviewWorkPlanTests
         _cycles.TryAddAsync(cycle).GetAwaiter().GetResult();
 
         return cycle;
+    }
+
+    /// <summary>Runs Discover then Collect, returning the plan and what Collect reported.</summary>
+    private async Task<(EquityReviewWorkPlan Plan, CycleStageResult Result)> RunCollectAsync(
+        OperatingCycle cycle,
+        DiscoverySettings settings)
+    {
+        var plan = Plan(settings);
+
+        await plan.RunStageAsync(Context(cycle, CycleStage.Discover));
+
+        var result = await plan.RunStageAsync(Context(cycle, CycleStage.Collect));
+
+        return (plan, result);
+    }
+
+    /// <summary>
+    /// An acquisition that records what it was asked for and answers however the test needs.
+    /// </summary>
+    /// <remarks>
+    /// It never reaches a network, which is the point: this suite proves the plan asks correctly
+    /// and reacts correctly, and the gateway's own refusals are established by the ingestion tests.
+    /// </remarks>
+    internal sealed class RecordingAcquisition : IDataAcquisition
+    {
+        private readonly List<IngestionRequest> _requests = [];
+
+        private string? _refusalRule;
+        private string? _reason;
+        private bool _failed;
+
+        public IReadOnlyList<IngestionRequest> Requests => _requests;
+
+        public void Refuse(string ruleId, string reason)
+        {
+            _refusalRule = ruleId;
+            _reason = reason;
+        }
+
+        public void Fail(string reason)
+        {
+            _failed = true;
+            _reason = reason;
+        }
+
+        public Task<AcquisitionResult> AcquireAsync(
+            IngestionRequest request,
+            CancellationToken cancellationToken = default)
+        {
+            _requests.Add(request);
+
+            if (_refusalRule is not null)
+            {
+                return Task.FromResult(new AcquisitionResult(
+                    IngestionRun.Refuse(request, _refusalRule, _reason!, request.RequestedAtUtc),
+                    Normalization: null));
+            }
+
+            var run = IngestionRun.Start(request, request.RequestedAtUtc);
+
+            if (_failed)
+            {
+                run.MarkFailed(_reason!, request.RequestedAtUtc);
+            }
+            else
+            {
+                run.MarkSucceeded(request.RequestedAtUtc);
+            }
+
+            return Task.FromResult(new AcquisitionResult(run, Normalization: null));
+        }
     }
 
     private static CycleBudget Budget() =>

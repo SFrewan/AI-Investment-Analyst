@@ -28,7 +28,8 @@ namespace AI.Investment.Integration.Tests.Ingestion;
 /// </remarks>
 public sealed class EodhdProviderTests
 {
-    private const string Key = "test-key-not-a-real-credential";
+    /// <summary>The stand-in credential. A sentence, not a key-shaped string.</summary>
+    private const string Key = EodhdTestOptions.SyntheticKey;
 
     private static readonly DateTime Now = new(2026, 8, 28, 12, 0, 0, DateTimeKind.Utc);
 
@@ -88,7 +89,7 @@ public sealed class EodhdProviderTests
         var handler = new StubHandler(HttpStatusCode.OK, TwoRows);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => Provider(handler, key: string.Empty).FetchAsync(Request("AAPL.US")));
+            () => Provider(handler, key: null).FetchAsync(Request("AAPL.US")));
 
         Assert.Equal(0, handler.Calls);
         Assert.Contains("Providers:Eodhd:ApiKey", exception.Message, StringComparison.Ordinal);
@@ -230,16 +231,12 @@ public sealed class EodhdProviderTests
 
     // ---- helpers ----------------------------------------------------------------------------
 
-    private static EodhdProvider Provider(HttpMessageHandler handler, string key = Key) =>
+    private static EodhdProvider Provider(HttpMessageHandler handler, string? key = Key) =>
         new(
             new HttpClient(handler) { BaseAddress = new Uri("https://eodhd.test/") },
-            Options.Create(new EodhdOptions
-            {
-                Enabled = true,
-                ApiKey = key,
-                LicensingNotes = "test",
-                Exchanges = [new ExchangeSessionOptions { Code = "US" }],
-            }),
+            Options.Create(EodhdTestOptions.Build(
+                credential: key,
+                exchanges: [new ExchangeSessionOptions { Code = "US" }])),
             new FixedClock(Now));
 
     private static IngestionRequest Request(string symbol, DateRange? window = null) =>

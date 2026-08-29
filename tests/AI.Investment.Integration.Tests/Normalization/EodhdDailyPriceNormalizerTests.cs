@@ -6,6 +6,7 @@ using AI.Investment.Domain.Sources;
 using AI.Investment.Infrastructure.Configuration;
 using AI.Investment.Infrastructure.Ingestion.Providers;
 using AI.Investment.Infrastructure.Normalization;
+using AI.Investment.Integration.Tests.Ingestion;
 using Microsoft.Extensions.Options;
 using Xunit;
 
@@ -217,21 +218,9 @@ public sealed class EodhdDailyPriceNormalizerTests
     // ---- helpers ----------------------------------------------------------------------------
 
     private static EodhdDailyPriceNormalizer Normalizer() =>
-        new(Options.Create(new EodhdOptions
-        {
-            Enabled = true,
-            ApiKey = "irrelevant-here",
-            LicensingNotes = "test",
-            Exchanges =
-            [
-                new ExchangeSessionOptions
-                {
-                    Code = "US",
-                    SessionCloseUtc = TimeSpan.FromHours(20),
-                    PublicationDelay = TimeSpan.FromHours(4),
-                },
-            ],
-        }));
+        // The normaliser never touches the credential; what it needs from these options is the
+        // stated exchange session, and that is what this fixture is about.
+        new(Options.Create(EodhdTestOptions.Build()));
 
     private static Task<NormalizationResult> Normalize(string payload, string symbol = "AAPL.US") =>
         Normalize(Encoding.UTF8.GetBytes(payload), symbol);

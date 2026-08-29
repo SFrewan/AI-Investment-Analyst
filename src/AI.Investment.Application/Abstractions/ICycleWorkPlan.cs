@@ -76,6 +76,24 @@ public interface ICycleWorkPlan
     /// <summary>The template name this plan answers for.</summary>
     string TemplateName { get; }
 
+    /// <summary>
+    /// Why this pass produced nothing, when something the installation was supposed to supply was
+    /// missing. Empty when the pass simply found nothing worth proposing.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The two are different facts and the cycle's own status cannot tell them apart: a pass over a
+    /// series that has not fallen and a pass whose market data was refused both end with no
+    /// proposal. Only one of them is somebody's problem, and this is how the loop learns which.
+    /// </para>
+    /// <para>
+    /// A default of empty, so a plan that never blocks does not have to say so. The runner reads
+    /// this only when a stage also reported <c>ProviderFailed</c>, so a plan that leaves it empty
+    /// still escalates - with a reason that points at the ingestion run ledger instead.
+    /// </para>
+    /// </remarks>
+    string Obstacle => string.Empty;
+
     /// <summary>Runs one stage.</summary>
     Task<CycleStageResult> RunStageAsync(
         CycleStageContext context,

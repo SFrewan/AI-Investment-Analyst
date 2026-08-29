@@ -283,6 +283,48 @@ public sealed class Watch
             "Disabling a watch records why, so the next person knows whether to turn it back on.");
     }
 
+    /// <summary>
+    /// Puts a scheduled watch on a different interval, leaving everything else alone.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// A schedule is a statement about how often something is worth looking at, and that is a
+    /// judgement an operator revises - after a market changes, or to prove a pipeline without
+    /// waiting a day for it. Revising it is an ordinary domain change and goes through the seam
+    /// like any other: the write guard permits a watch only its firing record without an
+    /// authorisation window, so this cannot be persisted outside one.
+    /// </para>
+    /// <para>
+    /// <strong>Only the interval moves.</strong> <see cref="CreatedAtUtc"/>,
+    /// <see cref="LastFiredAtUtc"/> and <see cref="FireCount"/> are untouched, so the watch's
+    /// history survives and the next firing is still measured from when it last fired. Rewriting
+    /// those would be forging the record of what ran, which is the one thing a reschedule must
+    /// never do. <see cref="Cooldown"/> is untouched too: it bounds a storm and is a separate
+    /// decision from how often the schedule comes round.
+    /// </para>
+    /// <para>
+    /// Refused for any trigger type but <see cref="TriggerType.Schedule"/>. A price-move or
+    /// threshold watch waits for a comparison rather than for time, and giving it an interval
+    /// would produce a condition it can never meet.
+    /// </para>
+    /// </remarks>
+    public void Reschedule(TimeSpan interval, DateTime nowUtc)
+    {
+        DateRange.EnsureUtc(nowUtc, nameof(nowUtc));
+
+        if (TriggerType != TriggerType.Schedule)
+        {
+            throw new DomainRuleViolationException(
+                "Watch.RescheduleRequiresSchedule",
+                $"Watch '{Name}' waits for {TriggerType}, which is not a schedule. An interval " +
+                "would give it a condition it can never meet.");
+        }
+
+        // Every() refuses a zero or negative interval, so the same rule that governs creation
+        // governs this. It is not restated here, because two copies of a rule eventually disagree.
+        Condition = TriggerCondition.Every(interval);
+    }
+
     /// <summary>Switches the watch back on and clears the recorded reason.</summary>
     public void Enable(DateTime nowUtc)
     {

@@ -27,6 +27,27 @@ public sealed record DiscoverySettings
     /// <summary>The observation attribute closing prices are read from.</summary>
     public string PriceAttribute { get; init; } = "security.close";
 
+    /// <summary>
+    /// The registered source a price review acquires from before it screens, or blank to screen
+    /// only what is already stored.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Named here rather than compiled into the plan, for the same reason
+    /// <see cref="PriceAttribute"/> is: which vendor an installation holds a licence with is the
+    /// installation's fact, not the screen's. Every gate still applies to whatever is named - the
+    /// source must be registered, admissible under its own recorded licensing, have a connector,
+    /// and be within its rate limit - so naming a source here grants nothing that the registry has
+    /// not already granted.
+    /// </para>
+    /// <para>
+    /// Blank means acquire nothing and screen what is stored. That is a real arrangement rather
+    /// than a disabled feature: an installation whose data arrives by some other route wants
+    /// exactly this, and so does a test that seeds observations directly.
+    /// </para>
+    /// </remarks>
+    public string PriceSourceId { get; init; } = "eodhd-eod";
+
     /// <summary>The currency an equity candidate's economics are denominated in.</summary>
     public string CurrencyCode { get; init; } = "USD";
 

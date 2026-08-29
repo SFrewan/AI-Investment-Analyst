@@ -1,5 +1,6 @@
 using System.Globalization;
 using AI.Investment.Application.Abstractions;
+using AI.Investment.Application.Ingestion;
 using AI.Investment.Application.Opportunities;
 using AI.Investment.Domain.Actions;
 using AI.Investment.Domain.Analytics;
@@ -11,6 +12,7 @@ using AI.Investment.Domain.Ingestion;
 using AI.Investment.Domain.Operations;
 using AI.Investment.Domain.Opportunities;
 using AI.Investment.Domain.Opportunities.Equity;
+using AI.Investment.Domain.Sources;
 using AI.Investment.Domain.ValueObjects;
 
 namespace AI.Investment.Application.Operations;
@@ -91,6 +93,7 @@ public sealed class EquityReviewWorkPlan : ICycleWorkPlan
     private readonly IEnumerable<IEvidenceRequirement> _requirements;
     private readonly IEnumerable<IOpportunityEconomicsCalculator> _calculators;
     private readonly PriceSeriesReader _prices;
+    private readonly IDataAcquisition _acquisition;
     private readonly DiscoverySettings _settings;
     private readonly IOpportunityRepository _repository;
     private readonly IUnitOfWork _unitOfWork;
@@ -112,6 +115,7 @@ public sealed class EquityReviewWorkPlan : ICycleWorkPlan
         IEnumerable<IEvidenceRequirement> requirements,
         IEnumerable<IOpportunityEconomicsCalculator> calculators,
         PriceSeriesReader prices,
+        IDataAcquisition acquisition,
         DiscoverySettings settings,
         IOpportunityRepository repository,
         IUnitOfWork unitOfWork,
@@ -123,6 +127,7 @@ public sealed class EquityReviewWorkPlan : ICycleWorkPlan
         _requirements = requirements ?? throw new ArgumentNullException(nameof(requirements));
         _calculators = calculators ?? throw new ArgumentNullException(nameof(calculators));
         _prices = prices ?? throw new ArgumentNullException(nameof(prices));
+        _acquisition = acquisition ?? throw new ArgumentNullException(nameof(acquisition));
         _settings = settings ?? throw new ArgumentNullException(nameof(settings));
         _repository = repository ?? throw new ArgumentNullException(nameof(repository));
         _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
@@ -156,7 +161,7 @@ public sealed class EquityReviewWorkPlan : ICycleWorkPlan
         return context.Stage switch
         {
             CycleStage.Discover => await DiscoverAsync(context, cancellationToken).ConfigureAwait(false),
-            CycleStage.Collect => await CollectAsync(cancellationToken).ConfigureAwait(false),
+            CycleStage.Collect => await CollectAsync(context, cancellationToken).ConfigureAwait(false),
             CycleStage.Validate => Screen(),
             CycleStage.Analyze => await AskDiscoverersAsync(cancellationToken).ConfigureAwait(false),
             CycleStage.Calculate => ComputeEconomics(),
@@ -253,7 +258,33 @@ public sealed class EquityReviewWorkPlan : ICycleWorkPlan
         return Nothing();
     }
 
-    private async Task<CycleStageResult> CollectAsync(CancellationToken cancellationToken)
+    /// <summary>
+    /// Acquires the instrument's prices, then reads the series the screen will run over.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Fetching belongs here, inside the cycle.</strong> A cycle is a leased, persisted
+    /// state machine with a budget that already counts provider calls, so a fetch that fails, is
+    /// refused or exhausts a rate limit is retried, escalated and accounted for by machinery that
+    /// exists rather than by a timer beside it. It is also the only place that knows which
+    /// instrument is being reviewed: the subject came from the watch two stages ago.
+    /// </para>
+    /// <para>
+    /// <strong>It grants nothing.</strong> The acquisition goes through the ingestion gateway
+    /// unchanged, and every gate still refuses in its own name - the source must be registered, its
+    /// recorded licensing must admit the category and region, a connector must exist for it, that
+    /// connector must be capable of the request, and the rate limiter must allow it. A refusal is
+    /// written to the run ledger with the rule that produced it.
+    /// </para>
+    /// <para>
+    /// <strong>A fetch that did not happen fails the stage rather than falling through to what is
+    /// stored.</strong> Screening yesterday's closes because today's fetch was refused is the
+    /// quietest way to act on stale evidence, and it would look identical to a successful pass.
+    /// </para>
+    /// </remarks>
+    private async Task<CycleStageResult> CollectAsync(
+        CycleStageContext context,
+        CancellationToken cancellationToken)
     {
         var subject = _subject;
 
@@ -262,11 +293,76 @@ public sealed class EquityReviewWorkPlan : ICycleWorkPlan
             return Nothing();
         }
 
+        var acquisition = await AcquireAsync(subject, context, cancellationToken).ConfigureAwait(false);
+
+        if (acquisition is not null && !acquisition.WasFetched)
+        {
+            // The run is already in the ledger with its refusal rule or failure reason; this states
+            // the obstacle for the cycle and leaves the series empty, so nothing is screened.
+            _obstacle = string.Create(
+                CultureInfo.InvariantCulture,
+                $"market data for {subject} could not be acquired from " +
+                $"'{_settings.PriceSourceId}': {acquisition.Run.Reason ?? acquisition.Run.Outcome.ToString()}");
+
+            return new CycleStageResult
+            {
+                ModelSpend = Money.Zero(Currency.Create(_settings.CurrencyCode)),
+                ProviderCalls = 1,
+                ProviderFailed = true,
+            };
+        }
+
         _series = await _prices
             .ReadAsync(subject, _settings.PriceAttribute, _settings.MaxSessions, _asAtUtc, cancellationToken)
             .ConfigureAwait(false);
 
-        return Nothing();
+        if (acquisition is null)
+        {
+            return Nothing();
+        }
+
+        return new CycleStageResult
+        {
+            ModelSpend = Money.Zero(Currency.Create(_settings.CurrencyCode)),
+            ProviderCalls = 1,
+        };
+    }
+
+    /// <summary>
+    /// One acquisition for the subject under review, or null when no source is configured.
+    /// </summary>
+    /// <remarks>
+    /// No window is stated. The screen counts a base rate over a hundred and twenty sessions and the
+    /// rule needs sixty of history behind it, so the request asks for what the connector supplies
+    /// and the reader takes the most recent sessions that were public at the cycle's pinned instant.
+    /// A window narrowed to "since yesterday" would produce a series too short to screen and a
+    /// candidate that could never be evidenced.
+    /// </remarks>
+    private async Task<AcquisitionResult?> AcquireAsync(
+        IngestionSubject subject,
+        CycleStageContext context,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_settings.PriceSourceId))
+        {
+            return null;
+        }
+
+        var request = IngestionRequest.Create(
+            SourceId.Create(_settings.PriceSourceId),
+            DataCategory.MarketPrices,
+            Region.Global,
+            subject,
+
+            // The cycle's own correlation, so the run, its archived payload and every observation
+            // it produced trace back to the pass that asked for them.
+            CorrelationFor(context),
+
+            // When the fetch is actually being made. The reads stay pinned to _asAtUtc; stamping a
+            // request with an instant that has passed would misdate the run in the ledger.
+            _clock.UtcNow);
+
+        return await _acquisition.AcquireAsync(request, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>

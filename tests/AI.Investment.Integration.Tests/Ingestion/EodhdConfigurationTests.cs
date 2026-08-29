@@ -16,7 +16,11 @@ public sealed class EodhdConfigurationTests
 {
     private static readonly DateTime Now = new(2026, 8, 28, 12, 0, 0, DateTimeKind.Utc);
 
-    private const string Secret = "a-key-that-must-never-appear-anywhere";
+    /// <summary>
+    /// The stand-in credential these tests prove never escapes. Unmistakably synthetic - a
+    /// sentence with spaces in it, of a shape no vendor issues.
+    /// </summary>
+    private const string Secret = EodhdTestOptions.SyntheticKey;
 
     /// <summary>A connector nobody switched on validates, and is simply absent.</summary>
     [Fact]
@@ -26,13 +30,13 @@ public sealed class EodhdConfigurationTests
     [Fact]
     public void An_enabled_connector_without_a_key_is_refused() =>
         Assert.Contains(
-            Validate(Enabled(key: string.Empty)),
+            Validate(Enabled(key: null)),
             problem => problem.MemberNames.Contains(nameof(EodhdOptions.ApiKey)));
 
     [Fact]
     public void An_enabled_connector_without_stated_licensing_is_refused() =>
         Assert.Contains(
-            Validate(Enabled(licensing: string.Empty)),
+            Validate(Enabled(licensing: null)),
             problem => problem.MemberNames.Contains(nameof(EodhdOptions.LicensingNotes)));
 
     /// <summary>
@@ -113,7 +117,7 @@ public sealed class EodhdConfigurationTests
     [Fact]
     public void Unstated_terms_are_recorded_as_unstated()
     {
-        var source = new EodhdSource(Options.Create(Enabled(licensing: string.Empty))).Definition(Now);
+        var source = new EodhdSource(Options.Create(Enabled(licensing: null))).Definition(Now);
 
         Assert.Equal(EodhdSource.UnstatedTerms, source.Licensing.Notes);
         Assert.False(source.Licensing.RedistributionAllowed);
@@ -242,26 +246,25 @@ public sealed class EodhdConfigurationTests
     private static DataSource Definition() =>
         new EodhdSource(Options.Create(Enabled())).Definition(Now);
 
+    /// <summary>
+    /// The options under test, bound from configuration exactly as the application binds them.
+    /// </summary>
+    /// <remarks>
+    /// A null key means the setting is absent from configuration altogether, which is the state an
+    /// installation that has configured nothing is actually in - a likelier mistake than an empty
+    /// string, and the one these tests are about.
+    /// </remarks>
     private static EodhdOptions Enabled(
-        string key = Secret,
-        string licensing = "Personal plan; storage permitted, redistribution not.",
+        string? key = Secret,
+        string? licensing = "Personal plan; storage permitted, redistribution not.",
         string baseAddress = EodhdOptions.DefaultBaseAddress,
-        IReadOnlyList<ExchangeSessionOptions>? exchanges = null) => new()
-        {
-            Enabled = true,
-            ApiKey = key,
-            LicensingNotes = licensing,
-            BaseAddress = baseAddress,
-            Exchanges = exchanges ??
-            [
-                new ExchangeSessionOptions
-                {
-                    Code = "US",
-                    SessionCloseUtc = TimeSpan.FromHours(20),
-                    PublicationDelay = TimeSpan.FromHours(4),
-                },
-            ],
-        };
+        IReadOnlyList<ExchangeSessionOptions>? exchanges = null) =>
+        EodhdTestOptions.Build(
+            enabled: true,
+            credential: key,
+            licensing: licensing,
+            baseAddress: baseAddress,
+            exchanges: exchanges);
 
     private static List<ValidationResult> Validate(EodhdOptions options)
     {

@@ -159,6 +159,11 @@ public sealed class OperatingCycleRunner
         CycleStageResult? last = null;
         var escalated = false;
 
+        // Sticky across the pass. A fetch that failed in Collect is still the reason the cycle has
+        // nothing to show four stages later, and the stage result that carried the flag is long
+        // out of scope by then.
+        var providerFailed = false;
+
         while (cycle.IsRunning)
         {
             var now = _clock.UtcNow;
@@ -191,6 +196,8 @@ public sealed class OperatingCycleRunner
                     new CycleStageContext(cycle.CycleId, cycle.Capability, cycle.TemplateName, stage, now),
                     cancellationToken).ConfigureAwait(false);
 
+                providerFailed |= last.ProviderFailed;
+
                 if (stage == CycleStage.ProposeAction)
                 {
                     pending = last.Proposal;
@@ -208,10 +215,33 @@ public sealed class OperatingCycleRunner
 
             if (cycle.Stage == CycleStages.Last)
             {
+                // A pass whose provider failed and which proposed nothing is indistinguishable, by
+                // status alone, from a pass that fetched cleanly and found nothing worth proposing.
+                // Both read as Completed. Escalating the first is what stops a broken observation
+                // from looking like a quiet one - which on the first live cycle is the difference
+                // between "it worked" and "it appeared to".
+                var unreportedFailure = providerFailed && pending is null;
+
                 cycle.Complete(_clock.UtcNow);
                 await _cycles.SaveAsync(cancellationToken).ConfigureAwait(false);
                 await RecordCycleFinishedAsync(cycle, AuditEventType.CycleCompleted, cancellationToken)
                     .ConfigureAwait(false);
+
+                if (unreportedFailure)
+                {
+                    // The cycle stays Completed. It did run to the end; it has nothing to show and
+                    // a reason why, and marking it failed would change how every existing read path
+                    // reports a cycle that behaved exactly as designed.
+                    await _escalations.RaiseAsync(
+                        cycle.Capability,
+                        EscalationReason.ProviderFailure,
+                        ObstacleOf(plan),
+                        cycle.CycleId,
+                        proposalId: null,
+                        cancellationToken: cancellationToken).ConfigureAwait(false);
+
+                    escalated = true;
+                }
 
                 return Result(cycle, "completed", escalated, leased: true);
             }
@@ -355,6 +385,20 @@ public sealed class OperatingCycleRunner
             return true;
         }
     }
+
+    /// <summary>
+    /// What the plan said stopped it, or a statement that it did not say.
+    /// </summary>
+    /// <remarks>
+    /// A plan is not obliged to explain itself, and an escalation with an empty explanation would
+    /// be worse than none: it would tell an operator that something is wrong and nothing about
+    /// what. The fallback points at the record that always exists.
+    /// </remarks>
+    private static string ObstacleOf(ICycleWorkPlan plan) =>
+        string.IsNullOrWhiteSpace(plan.Obstacle)
+            ? "a stage reported a provider failure and the pass proposed nothing. The plan stated " +
+              "no obstacle; the ingestion run ledger records what was refused or what failed."
+            : plan.Obstacle;
 
     private async Task SuspendedByBudgetAsync(OperatingCycle cycle, CancellationToken cancellationToken)
     {

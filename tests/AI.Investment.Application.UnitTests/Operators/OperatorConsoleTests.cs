@@ -1,3 +1,5 @@
+using System.Reflection;
+
 using AI.Investment.Application.Abstractions;
 using AI.Investment.Application.Actions;
 using AI.Investment.Application.Operations;
@@ -287,6 +289,445 @@ public sealed class OperatorConsoleTests
         Assert.Equal(OperatorOutcomeStatus.Refused, outcome.Status);
         Assert.Empty(await _watches.GetAllAsync());
         Assert.Empty(_audit.Records);
+    }
+
+    // ---- watch disablement: the reversal that makes creation safe ---------------------------
+
+    /// <summary>
+    /// The test this whole block exists for. Creating a watch was a one-way door until a person
+    /// could take it back, and taking it back has to reach the path that actually evaluates it.
+    /// </summary>
+    [Fact]
+    public async Task A_disabled_watch_is_no_longer_offered_to_the_trigger_evaluator()
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+
+        await Console().CreateScheduledWatchAsync(Definition());
+
+        var watch = Assert.Single(await _watches.GetAllAsync());
+
+        Assert.Single(await _watches.GetEnabledAsync(TriggerType.Schedule));
+
+        var outcome = await Console().DisableScheduledWatchAsync(
+            watch.WatchId,
+            "the vendor is restating prices");
+
+        Assert.True(outcome.Succeeded);
+        Assert.False(watch.Enabled);
+        Assert.Contains("restating", watch.DisabledReason!, StringComparison.Ordinal);
+        Assert.Empty(await _watches.GetEnabledAsync(TriggerType.Schedule));
+
+        // Disabled, not deleted: the row and its history survive so the record of what ran stays
+        // answerable.
+        Assert.Single(await _watches.GetAllAsync());
+    }
+
+    [Fact]
+    public async Task Disabling_a_watch_is_audited_under_the_operators_own_name()
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+
+        await Console().CreateScheduledWatchAsync(Definition());
+        var watch = Assert.Single(await _watches.GetAllAsync());
+
+        var outcome = await Console().DisableScheduledWatchAsync(watch.WatchId, "stepping back");
+
+        Assert.True(outcome.Succeeded);
+
+        // Filtered by action type rather than cleared: the create above audits too, and a double
+        // that could be emptied mid-test would let an assertion pass for the wrong reason.
+        var record = Assert.Single(
+            _audit.Records,
+            r => r.EventType == AuditEventType.ActionExecuted &&
+                 r.ActionType == OperatorActionTypes.DisableWatch.Value);
+
+        Assert.Equal(OperatorId, record.Actor);
+        Assert.Equal(ProposerKind.Human, record.ActorKind);
+        Assert.Equal(Capability.ReferenceDataManagement, record.Capability);
+        Assert.Equal(OperatorActionTypes.DisableWatch.Value, record.ActionType);
+    }
+
+    /// <summary>
+    /// The write goes through the seam, not around it: one authorisation window is opened for it,
+    /// and the store is saved exactly once inside that window.
+    /// </summary>
+    [Fact]
+    public async Task Disabling_a_watch_persists_inside_one_authorisation_window()
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+
+        await Console().CreateScheduledWatchAsync(Definition());
+        var watch = Assert.Single(await _watches.GetAllAsync());
+
+        var savesBefore = _watches.SaveCount;
+        var windowsBefore = _writes.WindowsOpened;
+
+        var outcome = await Console().DisableScheduledWatchAsync(watch.WatchId, "stepping back");
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(savesBefore + 1, _watches.SaveCount);
+        Assert.Equal(windowsBefore + 1, _writes.WindowsOpened);
+    }
+
+    [Fact]
+    public async Task An_anonymous_caller_cannot_disable_a_watch()
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+        await Console().CreateScheduledWatchAsync(Definition());
+        var watch = Assert.Single(await _watches.GetAllAsync());
+
+        _operators.Current = null;
+
+        var outcome = await Console().DisableScheduledWatchAsync(watch.WatchId, "no");
+
+        Assert.Equal(OperatorOutcomeStatus.NotAuthenticated, outcome.Status);
+        Assert.True(watch.Enabled);
+        Assert.DoesNotContain(
+            _audit.Records,
+            r => r.ActionType == OperatorActionTypes.DisableWatch.Value);
+    }
+
+    [Fact]
+    public async Task An_operator_without_AdministerWatches_cannot_disable_a_watch()
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+        await Console().CreateScheduledWatchAsync(Definition());
+        var watch = Assert.Single(await _watches.GetAllAsync());
+
+        SignIn(OperatorPrivilege.AnswerEscalations);
+
+        var outcome = await Console().DisableScheduledWatchAsync(watch.WatchId, "no");
+
+        Assert.Equal(OperatorOutcomeStatus.NotPermitted, outcome.Status);
+        Assert.Contains("AdministerWatches", outcome.Reason, StringComparison.Ordinal);
+        Assert.True(watch.Enabled);
+        Assert.DoesNotContain(
+            _audit.Records,
+            r => r.ActionType == OperatorActionTypes.DisableWatch.Value);
+    }
+
+    [Fact]
+    public async Task A_watch_that_does_not_exist_is_not_found_and_nothing_is_proposed()
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+
+        var outcome = await Console().DisableScheduledWatchAsync(Guid.NewGuid(), "stepping back");
+
+        Assert.Equal(OperatorOutcomeStatus.NotFound, outcome.Status);
+        Assert.Empty(_audit.Records);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Disabling_a_watch_without_a_reason_is_refused(string reason)
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+
+        await Console().CreateScheduledWatchAsync(Definition());
+        var watch = Assert.Single(await _watches.GetAllAsync());
+
+        var outcome = await Console().DisableScheduledWatchAsync(watch.WatchId, reason);
+
+        Assert.Equal(OperatorOutcomeStatus.Refused, outcome.Status);
+        Assert.True(watch.Enabled);
+        Assert.DoesNotContain(
+            _audit.Records,
+            r => r.ActionType == OperatorActionTypes.DisableWatch.Value);
+    }
+
+    /// <summary>
+    /// Idempotent, and specifically not re-enabling. The second caller must not overwrite the
+    /// reason the first one recorded, and must not switch anything back on.
+    /// </summary>
+    [Fact]
+    public async Task Disabling_an_already_disabled_watch_changes_nothing_and_cannot_re_enable_it()
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+
+        await Console().CreateScheduledWatchAsync(Definition());
+        var watch = Assert.Single(await _watches.GetAllAsync());
+
+        var first = await Console().DisableScheduledWatchAsync(watch.WatchId, "the original reason");
+
+        Assert.True(first.Succeeded);
+
+        var savesAfterFirst = _watches.SaveCount;
+
+        var second = await Console().DisableScheduledWatchAsync(watch.WatchId, "a different reason");
+
+        Assert.Equal(OperatorOutcomeStatus.DuplicateSuppressed, second.Status);
+        Assert.False(watch.Enabled);
+        Assert.Contains("original", watch.DisabledReason!, StringComparison.Ordinal);
+        Assert.DoesNotContain("different", watch.DisabledReason!, StringComparison.Ordinal);
+        Assert.Equal(savesAfterFirst, _watches.SaveCount);
+    }
+
+    /// <summary>
+    /// There is no delete, and this asserts the absence rather than trusting it. A delete would
+    /// take the record of what ran with it.
+    /// </summary>
+    [Fact]
+    public void The_operator_console_offers_no_way_to_delete_a_watch()
+    {
+        var methods = typeof(OperatorConsole)
+            .GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)
+            .Select(m => m.Name)
+            .ToList();
+
+        Assert.DoesNotContain(methods, name =>
+            name.Contains("Delete", StringComparison.Ordinal) ||
+            name.Contains("Remove", StringComparison.Ordinal) ||
+            name.Contains("Enable", StringComparison.Ordinal));
+
+        Assert.Contains("DisableScheduledWatchAsync", methods, StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// No provider, no HTTP client, no host configuration, no cycle store. Disabling a watch cannot
+    /// call EODHD, cannot start a cycle and cannot reach OperationsHost:RunCycles, because the
+    /// console is not given anything that could.
+    /// </summary>
+    [Fact]
+    public void The_operator_console_cannot_reach_a_provider_the_network_or_host_configuration()
+    {
+        var dependencies = typeof(OperatorConsole)
+            .GetConstructors()
+            .Single()
+            .GetParameters()
+            .Select(p => p.ParameterType.Name)
+            .ToList();
+
+        Assert.DoesNotContain(dependencies, name =>
+            name.Contains("Provider", StringComparison.Ordinal) ||
+            name.Contains("Http", StringComparison.Ordinal) ||
+            name.Contains("Options", StringComparison.Ordinal) ||
+            name.Contains("Configuration", StringComparison.Ordinal) ||
+            name.Contains("Cycle", StringComparison.Ordinal));
+    }
+
+    // ---- rescheduling: how often, revised deliberately ----------------------------------------
+
+    [Fact]
+    public async Task Rescheduling_changes_only_the_interval()
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+
+        await Console().CreateScheduledWatchAsync(Definition());
+        var watch = Assert.Single(await _watches.GetAllAsync());
+
+        var createdAt = watch.CreatedAtUtc;
+        var cooldown = watch.Cooldown;
+        var savesBefore = _watches.SaveCount;
+
+        var outcome = await Console().RescheduleWatchAsync(
+            watch.WatchId, TimeSpan.FromMinutes(5), "proving the pipeline without waiting a day");
+
+        Assert.True(outcome.Succeeded);
+        Assert.Equal(TimeSpan.FromMinutes(5), watch.Condition.Interval);
+
+        // Everything else is exactly as it was. Rewriting the history would forge the record of
+        // what ran; rewriting the cooldown would remove the storm bound by accident.
+        Assert.Equal(createdAt, watch.CreatedAtUtc);
+        Assert.Null(watch.LastFiredAtUtc);
+        Assert.Equal(0, watch.FireCount);
+        Assert.Equal(cooldown, watch.Cooldown);
+        Assert.True(watch.Enabled);
+        Assert.Equal("Security", watch.Target.Kind);
+        Assert.Equal(TriggerType.Schedule, watch.TriggerType);
+        Assert.Equal("equity-price-review", watch.CycleTemplate);
+
+        Assert.Equal(savesBefore + 1, _watches.SaveCount);
+    }
+
+    /// <summary>
+    /// The property that makes a temporary schedule safe: putting it back restores it completely,
+    /// and both directions are audited.
+    /// </summary>
+    [Fact]
+    public async Task Rescheduling_is_reversible_and_both_changes_are_audited()
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+
+        await Console().CreateScheduledWatchAsync(Definition());
+        var watch = Assert.Single(await _watches.GetAllAsync());
+
+        var original = watch.Condition.Interval;
+
+        Assert.True((await Console().RescheduleWatchAsync(
+            watch.WatchId, TimeSpan.FromMinutes(5), "temporary, for the observation")).Succeeded);
+
+        Assert.True((await Console().RescheduleWatchAsync(
+            watch.WatchId, original!.Value, "restoring the daily schedule")).Succeeded);
+
+        Assert.Equal(original, watch.Condition.Interval);
+        Assert.Null(watch.LastFiredAtUtc);
+
+        // Two acts, two records. The idempotency key carries the interval, so putting it back is
+        // not mistaken for a repeat of taking it away.
+        var records = _audit.Records
+            .Where(r => r.EventType == AuditEventType.ActionExecuted &&
+                        r.ActionType == OperatorActionTypes.RescheduleWatch.Value)
+            .ToList();
+
+        Assert.Equal(2, records.Count);
+        Assert.All(records, r => Assert.Equal(OperatorId, r.Actor));
+        Assert.All(records, r => Assert.Equal(ProposerKind.Human, r.ActorKind));
+        Assert.All(records, r => Assert.Equal(Capability.ReferenceDataManagement, r.Capability));
+    }
+
+    [Fact]
+    public async Task Rescheduling_to_the_interval_it_already_has_changes_nothing()
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+
+        await Console().CreateScheduledWatchAsync(Definition());
+        var watch = Assert.Single(await _watches.GetAllAsync());
+
+        var savesBefore = _watches.SaveCount;
+
+        var outcome = await Console().RescheduleWatchAsync(
+            watch.WatchId, watch.Condition.Interval!.Value, "no change");
+
+        Assert.Equal(OperatorOutcomeStatus.DuplicateSuppressed, outcome.Status);
+        Assert.Equal(savesBefore, _watches.SaveCount);
+    }
+
+    [Fact]
+    public async Task An_anonymous_caller_cannot_reschedule_a_watch()
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+        await Console().CreateScheduledWatchAsync(Definition());
+        var watch = Assert.Single(await _watches.GetAllAsync());
+        var original = watch.Condition.Interval;
+
+        _operators.Current = null;
+
+        var outcome = await Console().RescheduleWatchAsync(
+            watch.WatchId, TimeSpan.FromMinutes(5), "no");
+
+        Assert.Equal(OperatorOutcomeStatus.NotAuthenticated, outcome.Status);
+        Assert.Equal(original, watch.Condition.Interval);
+        Assert.DoesNotContain(
+            _audit.Records, r => r.ActionType == OperatorActionTypes.RescheduleWatch.Value);
+    }
+
+    [Fact]
+    public async Task An_operator_without_AdministerWatches_cannot_reschedule_a_watch()
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+        await Console().CreateScheduledWatchAsync(Definition());
+        var watch = Assert.Single(await _watches.GetAllAsync());
+        var original = watch.Condition.Interval;
+
+        SignIn(OperatorPrivilege.AnswerEscalations);
+
+        var outcome = await Console().RescheduleWatchAsync(
+            watch.WatchId, TimeSpan.FromMinutes(5), "no");
+
+        Assert.Equal(OperatorOutcomeStatus.NotPermitted, outcome.Status);
+        Assert.Contains("AdministerWatches", outcome.Reason, StringComparison.Ordinal);
+        Assert.Equal(original, watch.Condition.Interval);
+        Assert.DoesNotContain(
+            _audit.Records, r => r.ActionType == OperatorActionTypes.RescheduleWatch.Value);
+    }
+
+    [Fact]
+    public async Task Rescheduling_a_watch_that_does_not_exist_is_not_found()
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+
+        var outcome = await Console().RescheduleWatchAsync(
+            Guid.NewGuid(), TimeSpan.FromMinutes(5), "stepping back");
+
+        Assert.Equal(OperatorOutcomeStatus.NotFound, outcome.Status);
+        Assert.Empty(_audit.Records);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Rescheduling_without_a_reason_is_refused(string reason)
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+
+        await Console().CreateScheduledWatchAsync(Definition());
+        var watch = Assert.Single(await _watches.GetAllAsync());
+        var original = watch.Condition.Interval;
+
+        var outcome = await Console().RescheduleWatchAsync(
+            watch.WatchId, TimeSpan.FromMinutes(5), reason);
+
+        Assert.Equal(OperatorOutcomeStatus.Refused, outcome.Status);
+        Assert.Equal(original, watch.Condition.Interval);
+        Assert.DoesNotContain(
+            _audit.Records, r => r.ActionType == OperatorActionTypes.RescheduleWatch.Value);
+    }
+
+    /// <summary>
+    /// The domain's own refusal, reported rather than proposed - and checked before the effect, so
+    /// nothing can throw inside an authorisation window.
+    /// </summary>
+    [Fact]
+    public async Task An_interval_the_domain_refuses_is_reported_rather_than_proposed()
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+
+        await Console().CreateScheduledWatchAsync(Definition());
+        var watch = Assert.Single(await _watches.GetAllAsync());
+        var original = watch.Condition.Interval;
+
+        var outcome = await Console().RescheduleWatchAsync(
+            watch.WatchId, TimeSpan.Zero, "zero would mean firing continuously");
+
+        Assert.Equal(OperatorOutcomeStatus.Refused, outcome.Status);
+        Assert.Equal(original, watch.Condition.Interval);
+        Assert.DoesNotContain(
+            _audit.Records, r => r.ActionType == OperatorActionTypes.RescheduleWatch.Value);
+    }
+
+    /// <summary>A watch that waits for a comparison cannot be given an interval.</summary>
+    [Fact]
+    public async Task A_watch_that_is_not_a_schedule_cannot_be_rescheduled()
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+
+        var priceMove = Watch.Create(
+            "price move",
+            WatchTarget.Create("Security", "AAPL"),
+            TriggerType.PriceMove,
+            TriggerCondition.Compare(TriggerComparison.MovedAtLeast, 0.02m),
+            TimeSpan.FromHours(1),
+            Capability.OpportunityManagement,
+            "equity-price-review",
+            Now);
+
+        _watches.Seed(priceMove);
+
+        var outcome = await Console().RescheduleWatchAsync(
+            priceMove.WatchId, TimeSpan.FromMinutes(5), "not a schedule");
+
+        Assert.Equal(OperatorOutcomeStatus.Refused, outcome.Status);
+        Assert.Contains("schedule", outcome.Reason, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain(
+            _audit.Records, r => r.ActionType == OperatorActionTypes.RescheduleWatch.Value);
+    }
+
+    /// <summary>The write goes through the seam: one authorisation window, one save.</summary>
+    [Fact]
+    public async Task Rescheduling_persists_inside_one_authorisation_window()
+    {
+        SignIn(OperatorPrivilege.AdministerWatches);
+
+        await Console().CreateScheduledWatchAsync(Definition());
+        var watch = Assert.Single(await _watches.GetAllAsync());
+
+        var windowsBefore = _writes.WindowsOpened;
+
+        Assert.True((await Console().RescheduleWatchAsync(
+            watch.WatchId, TimeSpan.FromMinutes(5), "temporary")).Succeeded);
+
+        Assert.Equal(windowsBefore + 1, _writes.WindowsOpened);
     }
 
     // ---- helpers -----------------------------------------------------------------------------

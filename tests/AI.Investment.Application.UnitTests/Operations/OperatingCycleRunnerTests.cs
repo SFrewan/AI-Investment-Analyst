@@ -125,6 +125,139 @@ public sealed class OperatingCycleRunnerTests
             Now,
             TimeSpan.FromDays(7)));
 
+    /// <summary>A plan whose Collect reports a failed fetch and which proposes nothing.</summary>
+    private static ScriptedWorkPlan PlanFailingToCollect(string obstacle = "market data for Security:AAPL.US could not be acquired from 'eodhd-eod': refused.") =>
+        new(Template, context => context.Stage == CycleStage.Collect
+            ? new CycleStageResult
+            {
+                ModelSpend = Usd(0m),
+                ProviderCalls = 1,
+                ProviderFailed = true,
+            }
+            : CycleStageResult.Nothing(Currency.Usd))
+        { Obstacle = obstacle };
+
+    /// <summary>A plan whose fetch failed but which still proposed something.</summary>
+    private ScriptedWorkPlan PlanFailingButProposing() =>
+        new(Template, context => context.Stage switch
+        {
+            CycleStage.Collect => new CycleStageResult
+            {
+                ModelSpend = Usd(0m),
+                ProviderCalls = 1,
+                ProviderFailed = true,
+            },
+            CycleStage.ProposeAction => new CycleStageResult
+            {
+                ModelSpend = Usd(0.01m),
+                ProviderCalls = 0,
+                Proposal = Proposal(context.CycleId),
+            },
+            _ => CycleStageResult.Nothing(Currency.Usd),
+        })
+        { Obstacle = "the fetch failed but the pass proposed anyway." };
+
+    private List<Escalation> ProviderFailures() =>
+        _escalations.Escalations
+            .Where(e => e.Reason == EscalationReason.ProviderFailure)
+            .ToList();
+
+    // ---- A failed fetch must not look like a quiet pass ---------------------------------------
+
+    /// <summary>
+    /// The defect this closes: the cycle completed, and nothing anywhere said the market data
+    /// never arrived.
+    /// </summary>
+    [Fact]
+    public async Task A_provider_failure_with_no_proposal_raises_exactly_one_escalation()
+    {
+        var cycle = Cycle();
+        var plan = PlanFailingToCollect();
+
+        var result = await Runner(plan).RunAsync(cycle.CycleId, "worker-a");
+
+        var escalation = Assert.Single(ProviderFailures());
+
+        Assert.Equal(cycle.CycleId, escalation.CycleId!.Value);
+        Assert.Equal(cycle.Capability, escalation.Capability);
+        Assert.Null(escalation.ProposalId);
+
+        // Completed, deliberately: the cycle ran to the end, it just has nothing to show.
+        Assert.Equal(CycleStatus.Completed, result.Status);
+        Assert.True(result.Escalated);
+        Assert.Equal(CycleStages.Last, cycle.Stage);
+    }
+
+    [Fact]
+    public async Task The_escalation_carries_the_work_plans_own_obstacle()
+    {
+        var cycle = Cycle();
+        var plan = PlanFailingToCollect("the licence does not permit automated processing.");
+
+        await Runner(plan).RunAsync(cycle.CycleId, "worker-a");
+
+        var escalation = Assert.Single(ProviderFailures());
+
+        // Named, so an operator is not left to guess between "the vendor refused us" and "the
+        // series has not fallen".
+        Assert.Contains("licence", escalation.Explanation, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The distinction that makes the change worth anything. A pass that fetched cleanly and found
+    /// nothing is the normal case and must stay silent.
+    /// </summary>
+    [Fact]
+    public async Task A_successful_pass_that_proposes_nothing_raises_no_escalation()
+    {
+        var cycle = Cycle();
+        var plan = new ScriptedWorkPlan(Template, _ => CycleStageResult.Nothing(Currency.Usd));
+
+        var result = await Runner(plan).RunAsync(cycle.CycleId, "worker-a");
+
+        Assert.Empty(_escalations.Escalations);
+        Assert.Equal(CycleStatus.Completed, result.Status);
+        Assert.False(result.Escalated);
+    }
+
+    /// <summary>
+    /// A failed fetch that still produced a proposal goes through the gate as it always did. The
+    /// gate owns that outcome, and a second escalation from the completion branch would double-
+    /// report one pass.
+    /// </summary>
+    [Fact]
+    public async Task A_provider_failure_that_still_proposed_is_left_to_the_gate()
+    {
+        GrantAutonomy();
+
+        var cycle = Cycle();
+        var plan = PlanFailingButProposing();
+
+        var result = await Runner(plan).RunAsync(cycle.CycleId, "worker-a");
+
+        Assert.Empty(ProviderFailures());
+        Assert.Equal(1, plan.Executions);
+        Assert.Equal(CycleStatus.Completed, result.Status);
+    }
+
+    /// <summary>
+    /// The plan need not explain itself, but the operator still gets told something actionable
+    /// rather than an empty string.
+    /// </summary>
+    [Fact]
+    public async Task A_provider_failure_with_no_stated_obstacle_still_escalates_with_a_reason()
+    {
+        var cycle = Cycle();
+        var plan = PlanFailingToCollect(obstacle: string.Empty);
+
+        await Runner(plan).RunAsync(cycle.CycleId, "worker-a");
+
+        var escalation = Assert.Single(ProviderFailures());
+
+        Assert.False(string.IsNullOrWhiteSpace(escalation.Explanation));
+        Assert.Contains("ingestion run ledger", escalation.Explanation, StringComparison.Ordinal);
+    }
+
     // ---- The happy path ---------------------------------------------------------------------
 
     [Fact]

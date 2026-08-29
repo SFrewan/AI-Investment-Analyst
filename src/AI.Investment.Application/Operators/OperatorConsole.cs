@@ -271,6 +271,209 @@ public sealed class OperatorConsole
             cancellationToken).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Switches a scheduled watch off. The reversal of creating one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is what makes <see cref="CreateScheduledWatchAsync"/> safe to use. A watch is a standing
+    /// instruction to spend money, and until this existed the domain had <c>Watch.Disable</c> since
+    /// Phase 6 with nothing above it able to reach it - so creating one was a one-way door through
+    /// every surface a person actually has.
+    /// </para>
+    /// <para>
+    /// <strong>Disable, never delete.</strong> Deleting a watch would take with it the record that
+    /// it existed and the cycles it started would point at nothing. Disabling leaves the row, the
+    /// reason and the firing history where they are, and
+    /// <see cref="IWatchStore.GetEnabledAsync"/> already filters on <c>Enabled</c>, so a disabled
+    /// watch stops being evaluated without anything downstream having to learn a new rule.
+    /// </para>
+    /// <para>
+    /// <strong>It cannot switch anything on.</strong> The effect calls <c>Watch.Disable</c> and
+    /// nothing else; <c>Watch.Enable</c> is not reachable from this surface. A watch that is already
+    /// disabled is reported as a suppressed duplicate and its effect does not run at all, so the
+    /// reason recorded by whoever first switched it off survives whoever asks second.
+    /// </para>
+    /// </remarks>
+    public async Task<OperatorOutcome> DisableScheduledWatchAsync(
+        Guid watchId,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        if (Authorise(OperatorPrivilege.AdministerWatches) is not { } identity)
+        {
+            return Refusal(OperatorPrivilege.AdministerWatches);
+        }
+
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            return OperatorOutcome.Refused(
+                "Disabling a watch must state why. Whoever finds it switched off needs to know " +
+                "whether it stopped for an incident or for good before turning it back on.");
+        }
+
+        var watch = await _watches.FindAsync(watchId, cancellationToken).ConfigureAwait(false);
+
+        if (watch is null)
+        {
+            return OperatorOutcome.NotFound(
+                string.Create(CultureInfo.InvariantCulture, $"No watch {watchId} exists."));
+        }
+
+        if (!watch.Enabled)
+        {
+            // Not an error and not a second write: the caller wanted the watch off, and it is off.
+            // Running the effect again would overwrite the first reason with the second one.
+            return new OperatorOutcome(
+                OperatorOutcomeStatus.DuplicateSuppressed,
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"Watch {watchId} is already disabled. Nothing was changed."));
+        }
+
+        var stated = reason.Trim();
+
+        return await DispatchAsync(
+            identity,
+
+            // The same capability that permitted the creation. A reversal an operator could be
+            // refused while the creation was allowed would be no reversal at all.
+            Capability.ReferenceDataManagement,
+            OperatorActionTypes.DisableWatch,
+            ActionTarget.Create("Watch", watchId.ToString("d", CultureInfo.InvariantCulture)),
+            new OperatorActionParameters("Disable scheduled watch", watch.Name, stated),
+
+            // Keyed to the watch rather than to the minute. Disabling the same watch twice is the
+            // same act, and the repeat must not rewrite the reason the first one recorded.
+            string.Create(CultureInfo.InvariantCulture, $"operator.disable-watch:{watchId:d}"),
+            async token =>
+            {
+                watch.Disable(stated, _clock.UtcNow);
+
+                await _watches.SaveAsync(token).ConfigureAwait(false);
+
+                return string.Create(CultureInfo.InvariantCulture, $"Watch {watchId} disabled.");
+            },
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Puts a scheduled watch on a different interval.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// How often something is worth looking at is an operator's judgement, and revising it is an
+    /// ordinary domain change rather than a special case: same privilege as creating the watch,
+    /// same capability, same seam, same audit record. The write guard permits a watch only its
+    /// firing record without an authorisation window, so a reschedule cannot be persisted outside
+    /// one even if some future caller tried.
+    /// </para>
+    /// <para>
+    /// <strong>Only the interval moves.</strong> The domain leaves CreatedAtUtc, LastFiredAtUtc,
+    /// FireCount, Cooldown and Enabled exactly as they are, so the watch's history survives and the
+    /// next firing is still measured from when it last fired. That is what makes this reversible:
+    /// setting the interval back restores the schedule completely, and both changes are audited.
+    /// </para>
+    /// <para>
+    /// <strong>Everything is decided before the effect runs.</strong> The trigger type and the
+    /// interval are checked here, so the only thing left inside the authorisation window is the
+    /// assignment and the save. Proposing an action that cannot be built would audit an intention
+    /// that never existed, which is the same reason CreateScheduledWatchAsync validates first.
+    /// </para>
+    /// </remarks>
+    public async Task<OperatorOutcome> RescheduleWatchAsync(
+        Guid watchId,
+        TimeSpan interval,
+        string reason,
+        CancellationToken cancellationToken = default)
+    {
+        if (Authorise(OperatorPrivilege.AdministerWatches) is not { } identity)
+        {
+            return Refusal(OperatorPrivilege.AdministerWatches);
+        }
+
+        if (string.IsNullOrWhiteSpace(reason))
+        {
+            return OperatorOutcome.Refused(
+                "Changing a watch's schedule must state why. How often the platform looks at " +
+                "something is a judgement, and the next person needs the reason behind it.");
+        }
+
+        var watch = await _watches.FindAsync(watchId, cancellationToken).ConfigureAwait(false);
+
+        if (watch is null)
+        {
+            return OperatorOutcome.NotFound(
+                string.Create(CultureInfo.InvariantCulture, $"No watch {watchId} exists."));
+        }
+
+        if (watch.TriggerType != TriggerType.Schedule)
+        {
+            return OperatorOutcome.Refused(
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"Watch {watchId} waits for {watch.TriggerType}, which is not a schedule. An " +
+                    $"interval would give it a condition it can never meet."));
+        }
+
+        try
+        {
+            // Validated here rather than inside the effect, using the same factory the domain will
+            // use, so a bad interval is reported instead of proposed.
+            _ = TriggerCondition.Every(interval);
+        }
+        catch (DomainException exception)
+        {
+            return OperatorOutcome.Refused(exception.Message);
+        }
+
+        if (watch.Condition.Interval == interval)
+        {
+            // The caller wanted this schedule and it is already this schedule. Not a second write,
+            // and not an error.
+            return new OperatorOutcome(
+                OperatorOutcomeStatus.DuplicateSuppressed,
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"Watch {watchId} already runs every {interval}. Nothing was changed."));
+        }
+
+        var previous = watch.Condition.Interval;
+        var stated = reason.Trim();
+
+        return await DispatchAsync(
+            identity,
+
+            // The capability that permitted the watch to exist also governs how often it runs.
+            Capability.ReferenceDataManagement,
+            OperatorActionTypes.RescheduleWatch,
+            ActionTarget.Create("Watch", watchId.ToString("d", CultureInfo.InvariantCulture)),
+            new OperatorActionParameters(
+                "Reschedule watch",
+                watch.Name,
+                string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"every {previous} -> every {interval}: {stated}")),
+
+            // Keyed to the watch AND the interval, so restoring 1440 after a test at 5 minutes is
+            // a different act rather than a suppressed repeat - while double-clicking either one
+            // is still suppressed.
+            string.Create(
+                CultureInfo.InvariantCulture,
+                $"operator.reschedule-watch:{watchId:d}:{interval}"),
+            async token =>
+            {
+                watch.Reschedule(interval, _clock.UtcNow);
+
+                await _watches.SaveAsync(token).ConfigureAwait(false);
+
+                return string.Create(
+                    CultureInfo.InvariantCulture,
+                    $"Watch {watchId} now runs every {interval} (was every {previous}).");
+            },
+            cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task<OperatorOutcome> AnswerEscalationAsync(
         Guid escalationId,
         ActionType actionType,

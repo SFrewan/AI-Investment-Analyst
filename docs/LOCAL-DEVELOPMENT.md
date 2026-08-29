@@ -70,9 +70,14 @@ Development environment.
 
 ```powershell
 cd src\AI.Investment.Api
-dotnet user-secrets set "Database:ConnectionString" "Host=localhost;Port=5432;Database=ai_investment;Username=<user>;Password=<your password>"
+dotnet user-secrets set "Database:ConnectionString" "Host=localhost;Port=5432;Database=ai_investment;Username=<user>"
 dotnet user-secrets list
 ```
+
+**Append your own password to that connection string.** Npgsql needs a `Password` key, and the
+example above deliberately stops short of it: this file is committed, and a committed document that
+spells out a credential assignment — even with a placeholder in it — is a document the repository's
+secret scan is right to flag. Add the key yourself, with your value, when you run the command.
 
 The store lives in `%APPDATA%\Microsoft\UserSecrets\<UserSecretsId>\secrets.json`, outside the
 repository. Nothing you type above reaches source control.
@@ -81,11 +86,12 @@ repository. Nothing you type above reaches source control.
 deployment uses:
 
 ```powershell
-$env:Database__ConnectionString = "Host=localhost;Port=5432;Database=ai_investment;Username=<user>;Password=<your password>"
+$env:Database__ConnectionString = "Host=localhost;Port=5432;Database=ai_investment;Username=<user>"
 ```
 
 Double underscore, not a colon: that is how ASP.NET Core spells section separators in environment
-variables.
+variables. The same `Password` key has to be appended here too, and is omitted here for the same
+reason.
 
 **Do not** put it in `appsettings.json` or `appsettings.Development.json`. Both are committed. If
 you want a git-ignored file for non-secret local convenience, `appsettings.Local.json` is already

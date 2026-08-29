@@ -220,7 +220,7 @@ public sealed class AppDbContext : DbContext
         var mutatedBookkeeping = ChangeTracker
             .Entries()
             .Where(e => e.State is EntityState.Modified or EntityState.Deleted)
-            .Where(e => IsSeamBookkeeping(e.Entity))
+            .Where(IsSeamBookkeeping)
             .Select(e => $"{e.Entity.GetType().Name}:{e.State}")
             .Distinct(StringComparer.Ordinal)
             .ToList();
@@ -304,7 +304,7 @@ public sealed class AppDbContext : DbContext
         var unauthorised = ChangeTracker
             .Entries()
             .Where(e => e.State is EntityState.Added or EntityState.Modified or EntityState.Deleted)
-            .Where(e => !IsSeamBookkeeping(e.Entity))
+            .Where(e => !IsSeamBookkeeping(e))
             .Where(e => !(e.State == EntityState.Added && IsOperationsRecord(e)))
             .Where(e => !(e.State == EntityState.Modified && IsProgressUpdate(e)))
             .Select(e => $"{e.Entity.GetType().Name}:{e.State}")
@@ -321,7 +321,7 @@ public sealed class AppDbContext : DbContext
         // every other Added entity - but stating it makes this rule independent of that ordering
         // rather than silently correct because of it.
         if (!_internalWrite &&
-            ChangeTracker.Entries().Any(e => e.State == EntityState.Added && IsSeamBookkeeping(e.Entity)))
+            ChangeTracker.Entries().Any(e => e.State == EntityState.Added && IsSeamBookkeeping(e)))
         {
             // Reached when application code adds an exempt entity directly and calls the public
             // SaveChangesAsync. Audit and execution records must go through their stores so the
@@ -354,9 +354,42 @@ public sealed class AppDbContext : DbContext
     /// the platform believes, and beliefs are precisely what the seam exists to audit.
     /// </para>
     /// </remarks>
-    private static bool IsSeamBookkeeping(object entity) =>
-        entity is AuditRecord or ActionExecution or ProcessedAction or IngestionRun
-            or QuarantinedPayload;
+    private static bool IsSeamBookkeeping(EntityEntry entry) =>
+        entry.Entity is AuditRecord or ActionExecution or ProcessedAction or IngestionRun
+            or QuarantinedPayload ||
+        IsSeamBookkeepingType(RootOwnerType(entry));
+
+    /// <summary>
+    /// The aggregates above, by type, for an owned entry that walked up to one of them.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An owned value is tracked as its own entry, so an <see cref="IngestionRun"/>'s
+    /// <c>IngestionRequest</c> - and that request's own <c>IngestionSubject</c> - arrive here as
+    /// separate rows rather than as part of the run. Matching on an entry's own CLR type alone saw
+    /// <c>IngestionRun:Added</c> as exempt and its two owned rows as ordinary domain writes, so
+    /// recording a run outside an authorisation window failed with
+    /// <c>IngestionRequest:Added, IngestionSubject:Added</c> - the one situation the exemption
+    /// exists for.
+    /// </para>
+    /// <para>
+    /// This grants nothing new. An owned row cannot exist without the aggregate that owns it, and
+    /// that aggregate is already exempt; the walk only stops the guard from splitting one record
+    /// into an exempt part and a refused part. <see cref="IsOperationsRecord"/>,
+    /// <see cref="IsPrivilegeRecord"/> and <see cref="IsPositionRecord"/> each already walk
+    /// ownership for the same reason - this category was the one that never did.
+    /// </para>
+    /// <para>
+    /// It also makes the append-only rule above cover owned rows, which it previously did not: an
+    /// attempt to rewrite an audit record's owned value is now refused alongside the record itself.
+    /// </para>
+    /// </remarks>
+    private static bool IsSeamBookkeepingType(Type? type) =>
+        type == typeof(AuditRecord) ||
+        type == typeof(ActionExecution) ||
+        type == typeof(ProcessedAction) ||
+        type == typeof(IngestionRun) ||
+        type == typeof(QuarantinedPayload);
 
     /// <summary>
     /// The platform's account of its own unattended running: creatable without a window, never

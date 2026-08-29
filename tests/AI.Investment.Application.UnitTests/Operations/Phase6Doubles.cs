@@ -442,6 +442,9 @@ internal sealed class ScriptedWorkPlan : ICycleWorkPlan
 
     public string TemplateName { get; }
 
+    /// <summary>Settable, so a test can prove the obstacle reaches the escalation.</summary>
+    public string Obstacle { get; set; } = string.Empty;
+
     public IReadOnlyList<CycleStage> StagesRun => _stagesRun;
 
     public int Executions { get; private set; }

@@ -190,6 +190,88 @@ public sealed class OperatorController : ControllerBase
     }
 
     /// <summary>
+    /// Switches a scheduled watch off. The reversal of creating one.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Disable, not delete. The row, its stated reason and its firing history stay where they are;
+    /// only <c>Enabled</c> changes, and the store that feeds the trigger evaluator already filters
+    /// on it. There is deliberately no delete: a watch that never existed and a watch somebody
+    /// stopped are different facts, and only one of them can be audited.
+    /// </para>
+    /// <list type="bullet">
+    /// <item><c>200 OK</c> - disabled, or already disabled. Either way the watch is off.</item>
+    /// <item><c>400 Bad Request</c> - no reason was given.</item>
+    /// <item><c>401 / 403</c> - not authenticated, or without <c>AdministerWatches</c>.</item>
+    /// <item><c>404 Not Found</c> - no such watch.</item>
+    /// <item><c>409 Conflict</c> - policy denied it, or requires an approval this path cannot
+    /// supply. Nothing changed.</item>
+    /// </list>
+    /// </remarks>
+    [HttpPost("watches/{id:guid}/disablement")]
+    [Authorize(Policy = OperatorPolicies.AdministerWatches)]
+    [ProducesResponseType(typeof(OperatorOutcomeDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(OperatorOutcomeDto), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> DisableWatchAsync(
+        Guid id,
+        [FromBody] WatchDisablementRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        return Map(await _console
+            .DisableScheduledWatchAsync(id, request.Reason, cancellationToken)
+            .ConfigureAwait(false));
+    }
+
+    /// <summary>
+    /// Puts a scheduled watch on a different interval.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Only the interval moves. The watch's creation time, last firing, fire count, cooldown and
+    /// enabled state are all left as they are, so its history survives and setting the interval
+    /// back restores the schedule completely. Both changes are audited, which is what makes a
+    /// temporary schedule an auditable act rather than a quiet edit.
+    /// </para>
+    /// <list type="bullet">
+    /// <item><c>200 OK</c> - rescheduled, or already on that interval.</item>
+    /// <item><c>400 Bad Request</c> - no reason, an interval the domain refuses, or a watch that
+    /// waits for something other than a schedule.</item>
+    /// <item><c>401 / 403</c> - not authenticated, or without <c>AdministerWatches</c>.</item>
+    /// <item><c>404 Not Found</c> - no such watch.</item>
+    /// <item><c>409 Conflict</c> - policy denied it. Nothing changed.</item>
+    /// </list>
+    /// </remarks>
+    [HttpPost("watches/{id:guid}/schedule")]
+    [Authorize(Policy = OperatorPolicies.AdministerWatches)]
+    [ProducesResponseType(typeof(OperatorOutcomeDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status403Forbidden)]
+    [ProducesResponseType(typeof(OperatorOutcomeDto), StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> RescheduleWatchAsync(
+        Guid id,
+        [FromBody] WatchScheduleRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        return Map(await _console
+            .RescheduleWatchAsync(
+                id,
+                TimeSpan.FromMinutes(request.IntervalMinutes),
+                request.Reason,
+                cancellationToken)
+            .ConfigureAwait(false));
+    }
+
+    /// <summary>
     /// The outcome as a status code, with each refusal kept distinct.
     /// </summary>
     /// <remarks>
@@ -277,4 +359,35 @@ public sealed record ScheduledWatchRequest
     [Required]
     [MaxLength(80)]
     public string CycleTemplate { get; init; } = string.Empty;
+}
+
+/// <summary>Why a watch is being switched off.</summary>
+public sealed record WatchDisablementRequest
+{
+    /// <remarks>
+    /// Bounded to the length the domain keeps (<c>Watch.MaxNameLength</c>), so an over-long reason
+    /// comes back as a clean 400 rather than being silently truncated into the record.
+    /// </remarks>
+    [Required]
+    [MaxLength(120)]
+    public string Reason { get; init; } = string.Empty;
+}
+
+/// <summary>How often a watch should run, and why that is changing.</summary>
+public sealed record WatchScheduleRequest
+{
+    /// <remarks>
+    /// The same bound the create request uses, so the two cannot disagree about what a schedule
+    /// may be. The domain refuses zero or negative independently.
+    /// </remarks>
+    [Range(1, 100000)]
+    public int IntervalMinutes { get; init; }
+
+    /// <remarks>
+    /// Bounded to the length the domain keeps for a watch's own text, so an over-long reason is a
+    /// clean 400 rather than a silent truncation.
+    /// </remarks>
+    [Required]
+    [MaxLength(120)]
+    public string Reason { get; init; } = string.Empty;
 }

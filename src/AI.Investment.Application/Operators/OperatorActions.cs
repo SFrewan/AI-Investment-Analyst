@@ -113,6 +113,18 @@ public static class OperatorActionTypes
     public static ActionType EngageKillSwitch { get; } = ActionType.Create("operator.engage-kill-switch");
 
     public static ActionType CreateWatch { get; } = ActionType.Create("operator.create-watch");
+
+    /// <summary>
+    /// Switching a watch off. Separate from <see cref="CreateWatch"/> because the audit trail has
+    /// to be able to answer "who stopped this, and when" without inferring it from an absence.
+    /// </summary>
+    public static ActionType DisableWatch { get; } = ActionType.Create("operator.disable-watch");
+
+    /// <summary>
+    /// Putting a watch on a different interval. Distinct from creating one, so the audit trail can
+    /// answer "who changed how often this runs, and to what" without inferring it from two rows.
+    /// </summary>
+    public static ActionType RescheduleWatch { get; } = ActionType.Create("operator.reschedule-watch");
 }
 
 /// <summary>

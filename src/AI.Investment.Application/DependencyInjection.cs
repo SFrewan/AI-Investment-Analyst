@@ -10,7 +10,6 @@ using AI.Investment.Application.Normalization;
 using AI.Investment.Application.Abstractions;
 using AI.Investment.Application.Operations;
 using AI.Investment.Application.Operators;
-using AI.Investment.Application.Portfolio;
 using AI.Investment.Application.Opportunities;
 using AI.Investment.Application.Validation;
 using AI.Investment.Application.Retention;
@@ -79,6 +78,10 @@ public static class DependencyInjection
         services.AddScoped<EscalationService>();
         services.AddScoped<ShadowRecorder>();
         services.AddScoped<TriggerEvaluator>();
+
+        // The caller the evaluator never had. Schedule is the one trigger type that describes
+        // nothing arriving, so without this a scheduled watch is stored, enabled and never fired.
+        services.AddScoped<ScheduleTicker>();
         services.AddScoped<OperatingCycleRunner>();
 
         // ---- The work the loop runs. -----------------------------------------------------------
@@ -136,11 +139,6 @@ public static class DependencyInjection
         // Notably absent is anything that approves an action or disengages the kill switch. Both are
         // documented refusals rather than omissions; see OperatorConsole.
         services.AddScoped<OperatorConsole>();
-
-        // The portfolio read model. It composes three things that already existed - the position
-        // events, the capital ledger and the point-in-time price read - and stores nothing of its
-        // own, which is why it is a plain scoped service rather than a repository.
-        services.AddScoped<PortfolioReader>();
 
         services.AddScoped<RegisterKnownSourcesHandler>();
         services.AddScoped<ActivateSourceHandler>();
