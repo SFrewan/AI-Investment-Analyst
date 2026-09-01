@@ -116,8 +116,16 @@ public sealed record IngestionRequest
             sourceId,
             category,
             region,
-            subject,
-            window,
+
+            // COPIES, never the caller's instances - the rule Observation.RecordFact already
+            // states for its subject, applied here for the same reason. Both of these are owned
+            // entities, and a caller that builds one window and issues two requests inside one
+            // scope hands the same object to two owners; the provider reads that as re-parenting
+            // and refuses the save. That is exactly what stopped the Block 2B backfill, after the
+            // provider call had been made and paid for. Copying a value costs nothing and removes
+            // a trap that only fires once money has already been spent.
+            IngestionSubject.Create(subject.Kind, subject.Identifier),
+            window is null ? null : DateRange.Create(window.StartUtc, window.EndUtc),
             correlationId,
             requestedAtUtc);
     }

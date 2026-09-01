@@ -1,4 +1,6 @@
 using System.Net;
+using AI.Investment.Api.Controllers;
+using Microsoft.Extensions.DependencyInjection;
 using Xunit;
 
 namespace AI.Investment.Api.Tests;
@@ -10,13 +12,19 @@ namespace AI.Investment.Api.Tests;
 /// <para>
 /// <strong>These tests are about who may call, not about what comes back.</strong> The API test
 /// host points at a deliberately unreachable database, so an endpoint that reads one answers 500 -
-/// which is exactly why the assertions below are phrased as "not refused" rather than "200". The
-/// read model's own correctness is established in <c>PortfolioReaderTests</c> against fixtures, and
-/// its persistence in <c>PositionPersistenceTests</c> against a real PostgreSQL.
+/// which is why the assertions below are phrased as "not refused" rather than "200". The read
+/// model's own correctness is established in <c>PortfolioReaderTests</c> against fixtures, its
+/// persistence in <c>PositionPersistenceTests</c> against a real PostgreSQL, and that both routes
+/// actually answer in <c>PortfolioReadModelTests</c>, which runs against a real database.
 /// </para>
 /// <para>
-/// A 500 here is therefore evidence the request passed authentication and authorization and reached
-/// the controller. A 401 or 403 would mean it did not.
+/// <strong>A 500 is not by itself evidence the request reached the controller</strong>, and this
+/// file used to say that it was. A controller whose dependencies the container cannot resolve
+/// fails inside the activator, before the action, and answers 500 as well - so for as long as
+/// <c>PortfolioReader</c> went unregistered, both routes were broken for every caller and these
+/// tests passed. Three negative assertions cannot tell the two apart. The one below therefore
+/// asks the container the same question the activator asks before it reads the status code, and
+/// <c>CompositionTests</c> asks it of every controller in the API.
 /// </para>
 /// </remarks>
 public sealed class PortfolioEndpointTests : IClassFixture<ApiFactory>
@@ -74,13 +82,24 @@ public sealed class PortfolioEndpointTests : IClassFixture<ApiFactory>
     }
 
     /// <summary>
-    /// An operator holding the privilege gets past the gate. Where it lands after that is the
-    /// database's business, and this host does not have one.
+    /// An operator holding the privilege gets past the gate, and there is a controller behind it.
     /// </summary>
+    /// <remarks>
+    /// The container check is not decoration. Without it the only assertions here are three
+    /// negatives, and a controller that cannot be built satisfies every one of them - which is
+    /// exactly how an unregistered <c>PortfolioReader</c> shipped. With it, a composition defect
+    /// fails this test by name instead of passing it.
+    /// </remarks>
     [Theory]
     [MemberData(nameof(PortfolioRoutes))]
-    public async Task An_operator_with_the_privilege_reaches_the_endpoint(string route)
+    public async Task An_operator_with_the_privilege_reaches_the_controller(string route)
     {
+        using (var scope = _factory.Services.CreateScope())
+        {
+            Assert.NotNull(
+                ActivatorUtilities.CreateInstance<PortfolioController>(scope.ServiceProvider));
+        }
+
         using var client = _factory.CreateOperatorClient(ApiFactory.OperatorKey);
 
         using var response = await client.GetAsync(new Uri(route, UriKind.Relative));

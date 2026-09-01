@@ -57,16 +57,65 @@ public sealed class DiscoveryOptions
     [Range(1, 1000)]
     public int MinimumTrials { get; init; } = PriceRecoveryParameters.Standard.MinimumTrials;
 
+    /// <summary>
+    /// The registered source a price review acquires from before it screens.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This had no key at all until now. <c>DiscoverySettings</c> has carried a
+    /// <c>PriceSourceId</c> since the screen was written and <c>ToSettings</c> never mapped it, so
+    /// the value in force was always the shipped default whatever an operator put in
+    /// configuration - a setting that looked configurable and was not, which is the same class of
+    /// defect as a limit that reads as enforced and cannot bind.
+    /// </para>
+    /// <para>
+    /// Blank is a real arrangement rather than a disabled feature: it means acquire nothing and
+    /// screen what is already stored, which is what an installation whose data arrives by another
+    /// route wants, and what a test seeding observations directly wants.
+    /// </para>
+    /// </remarks>
+    public string PriceSourceId { get; init; } = DiscoverySettings.Standard.PriceSourceId;
+
+    /// <summary>The registered source share splits are acquired from.</summary>
+    public string SplitSourceId { get; init; } = DiscoverySettings.Standard.SplitSourceId;
+
+    /// <summary>The observation attribute share splits are read from.</summary>
+    [Required]
+    public string SplitAttribute { get; init; } = DiscoverySettings.Standard.SplitAttribute;
+
+    /// <summary>
+    /// The largest single-session move left unexplained by a known split before the series is
+    /// refused rather than screened.
+    /// </summary>
+    /// <remarks>
+    /// Bounded well away from zero: a tolerance near zero refuses every real series, and one at or
+    /// above 1 cannot refuse a total collapse, which is the case it exists to catch.
+    /// </remarks>
+    [Range(0.05, 0.95)]
+    public decimal MaxUnexplainedMove { get; init; } = DiscoverySettings.Standard.MaxUnexplainedMove;
+
     /// <summary>The plain settings object the application layer takes.</summary>
-    public DiscoverySettings ToSettings() => new()
+    /// <remarks>
+    /// <paramref name="eventThresholdRatio"/> is the validation run's own threshold, handed in
+    /// rather than configured here. The screen states a probability of an event and the validation
+    /// run scores that event; two settings keys for one number is how they came to describe
+    /// different events, and one argument is how that stops being possible.
+    /// </remarks>
+    public DiscoverySettings ToSettings(
+        decimal eventThresholdRatio = 0m) => new()
     {
         PriceAttribute = PriceAttribute,
+        PriceSourceId = PriceSourceId,
+        SplitSourceId = SplitSourceId,
+        SplitAttribute = SplitAttribute,
+        MaxUnexplainedMove = MaxUnexplainedMove,
         CurrencyCode = Currency,
         MaxSessions = MaxSessions,
         Rule = new PriceRecoveryParameters(
             MinimumSessions,
             DrawdownRatio,
             HorizonSessions,
-            MinimumTrials),
+            MinimumTrials,
+            eventThresholdRatio),
     };
 }

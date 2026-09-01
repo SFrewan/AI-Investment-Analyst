@@ -130,8 +130,15 @@ public static class DependencyInjection
         // The application layer depends on the dependency-injection abstraction and nothing else -
         // no configuration provider and no options binder - so the bound options are turned into a
         // plain settings object here and handed over as one.
+        //
+        // THE VALIDATION RUN'S OWN THRESHOLD IS HANDED TO THE RULE HERE, and this is the only place
+        // the two meet. The screen states a probability that a return will beat a threshold; the
+        // validation run scores whether it did. When those were two separately configured numbers
+        // they described two different events, and the platform's Brier score measured the gap
+        // rather than the model. One number, read once, passed to both.
         services.AddSingleton(provider =>
-            provider.GetRequiredService<IOptions<DiscoveryOptions>>().Value.ToSettings());
+            provider.GetRequiredService<IOptions<DiscoveryOptions>>().Value.ToSettings(
+                provider.GetRequiredService<IOptions<ValidationOptions>>().Value.EventThresholdRatio));
     }
 
     /// <summary>
@@ -389,9 +396,27 @@ public static class DependencyInjection
 
         services.AddTransient<IDataProvider>(provider => provider.GetRequiredService<EodhdProvider>());
 
+        // The corporate-actions half of the same subscription, on its own client and its own
+        // registry entry. Two sources rather than two categories on one, because a price feed and
+        // a splits feed have different cadences and a shared entry would have the freshness
+        // monitor calling a healthy splits feed stale on every day but a handful. See
+        // EodhdSplitsSource for the argument in full.
+        //
+        // Enabling EODHD therefore registers two inactive sources. Neither is activated here.
+        services
+            .AddHttpClient<EodhdSplitsProvider>(client =>
+            {
+                client.BaseAddress = new Uri(baseAddress, UriKind.Absolute);
+                client.Timeout = TimeSpan.FromSeconds(30);
+            });
+
+        services.AddTransient<IDataProvider>(
+            provider => provider.GetRequiredService<EodhdSplitsProvider>());
+
         // Registered inactive, like every other definition: seeding registers, an operator
         // activates through the Action/Policy seam.
         services.AddSingleton<ISourceDefinition, EodhdSource>();
+        services.AddSingleton<ISourceDefinition, EodhdSplitsSource>();
     }
 
     /// <summary>Registers the normalisers that read archived payloads.</summary>
@@ -425,6 +450,10 @@ public static class DependencyInjection
         // switched on. It needs the options only for the exchange sessions, and quarantines a
         // payload whose exchange nobody stated rather than assuming one.
         services.AddSingleton<INormalizer, EodhdDailyPriceNormalizer>();
+
+        // Reads the splits document into security.split-ratio observations, which is what lets a
+        // price series spanning a split be restated rather than refused.
+        services.AddSingleton<INormalizer, EodhdSplitsNormalizer>();
     }
 
     private static void AddSecEdgar(IServiceCollection services, IConfiguration configuration)

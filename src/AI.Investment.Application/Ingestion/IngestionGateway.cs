@@ -1,3 +1,4 @@
+using System.Globalization;
 using AI.Investment.Application.Abstractions;
 using AI.Investment.Application.Actions;
 using AI.Investment.Domain.Actions;
@@ -168,7 +169,7 @@ public sealed class IngestionGateway : IIngestionGateway
             new IngestionParameters(request),
             ActionEconomics.NoFinancialEffect(),
             Proposer,
-            request.Fingerprint(),
+            IdempotencyKeyFor(request),
             _clock.UtcNow);
 
         // Captured from inside the effect so that a run which started is still recorded when the
@@ -278,6 +279,43 @@ public sealed class IngestionGateway : IIngestionGateway
 
         return run;
     }
+
+    /// <summary>
+    /// The action idempotency key for one fetch: the request, scoped to the run that asked for it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>The fingerprint alone is not an action identity.</strong> It hashes source,
+    /// category, region, subject and window - deliberately nothing time-varying - so a recurring
+    /// watch produces the same fingerprint on every firing, for ever. Using it as the idempotency
+    /// key meant the first cycle claimed it and every cycle afterwards was suppressed as a
+    /// duplicate: a daily price review could fetch exactly once in the platform's lifetime, and
+    /// each later cycle recorded a refused run, archived nothing and raised a provider failure.
+    /// </para>
+    /// <para>
+    /// <strong>Scoping it to the correlation restores the intent without weakening it.</strong>
+    /// The correlation of a cycle-driven ingestion is derived from the cycle identity, and the
+    /// cycle store's unique index on the trigger key means one observation produces one cycle.
+    /// So a redelivered observation, a resumed cycle and a retried pass all carry the same
+    /// correlation and still deduplicate to a single fetch - which is what the key is for - while
+    /// a genuinely new observation is a new act and is allowed to happen.
+    /// </para>
+    /// <para>
+    /// <see cref="IngestionRequest.Fingerprint"/> is untouched. It still identifies the request
+    /// shape, which is what the stored <c>request_fingerprint</c> column and
+    /// <c>IIngestionRunStore.HasCompletedAsync</c> are about; those ask "has this exact request
+    /// ever succeeded", which is a different question from "has this act already been performed".
+    /// </para>
+    /// <para>
+    /// Length is bounded: 64 hex characters, a colon, and a correlation of at most
+    /// <see cref="CorrelationId.MaxLength"/>, giving 193 against
+    /// <see cref="ActionProposal.MaxIdempotencyKeyLength"/> of 200.
+    /// </para>
+    /// </remarks>
+    private static string IdempotencyKeyFor(IngestionRequest request) =>
+        string.Create(
+            CultureInfo.InvariantCulture,
+            $"{request.Fingerprint()}:{request.CorrelationId}");
 
     /// <summary>
     /// Describes a failure in terms safe to store permanently.

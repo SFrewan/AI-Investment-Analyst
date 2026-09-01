@@ -120,11 +120,25 @@ public sealed class Observation : AggregateRoot<ObservationId>
 
         return new Observation(
             ObservationId.New(),
-            subject,
+
+            // A COPY, never the caller's instance. A normaliser turns one payload into hundreds
+            // of observations and naturally passes the same subject object to all of them - and
+            // the persistence provider treats an owned value as belonging to exactly one owner,
+            // by reference. Sharing one instance meant the subject columns were written for the
+            // first observation and silently omitted for the rest, which the database refused as
+            // a null subject_kind. The subject is a value: copying it costs nothing and removes
+            // a trap no caller should have to know about.
+            IngestionSubject.Create(subject.Kind, subject.Identifier),
             validatedAttribute,
             value,
             ClaimKind.Fact,
-            provenance,
+
+            // A COPY for the same reason, and it was missed the first time. Provenance is owned
+            // too, and a normaliser that builds one Provenance outside its loop hands the same
+            // instance to every observation in the document - which writes the provenance columns
+            // for the first row and omits them for the rest. The subject was copied here and the
+            // provenance was not, which made the trap look closed when half of it was open.
+            provenance.Copy(),
             confidence: null,
             validatedCaveats);
     }

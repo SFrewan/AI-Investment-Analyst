@@ -51,9 +51,20 @@ public sealed record UpdateCadence
 
     public bool HasExpectedInterval => ExpectedInterval.HasValue;
 
-    public static UpdateCadence EventDriven { get; } = new(CadenceKind.EventDriven, null);
+    /// <summary>A source that publishes when something happens, so it cannot be late.</summary>
+    /// <remarks>
+    /// <strong>A fresh instance on every access, not a cached singleton.</strong> This type is
+    /// mapped as an owned entity, and the persistence provider associates an owned instance with
+    /// its owner by reference. One shared instance held by two owners in the same save is one
+    /// object with two owners, which the provider resolves by writing one of them as null - it
+    /// surfaced here as a not-null violation the first time two sources were seeded together.
+    /// Value equality is unaffected: this is a record, so two instances with the same values are
+    /// equal and hash alike. Same rule, same reason, as <c>LedgerAccount</c>.
+    /// </remarks>
+    public static UpdateCadence EventDriven => new(CadenceKind.EventDriven, null);
 
-    public static UpdateCadence OnDemand { get; } = new(CadenceKind.OnDemand, null);
+    /// <summary>Fetched when asked for, never on a schedule. Fresh per access - see above.</summary>
+    public static UpdateCadence OnDemand => new(CadenceKind.OnDemand, null);
 
     public static UpdateCadence Every(CadenceKind kind, TimeSpan expectedInterval)
     {

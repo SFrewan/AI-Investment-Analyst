@@ -1,7 +1,6 @@
-
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.13.35806.99 d17.13
+VisualStudioVersion = 17.13.35806.99
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{6D69538D-0440-5330-BA44-76237A4E1E60}"
 EndProject
@@ -10,6 +9,7 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{AB7FE6A3-B79F-5018-9713-0DBEF6145A97}"
 	ProjectSection(SolutionItems) = preProject
 		docs\AUDIT_AND_TARGET_ARCHITECTURE.md = docs\AUDIT_AND_TARGET_ARCHITECTURE.md
+		docs\LOCAL-DEVELOPMENT.md = docs\LOCAL-DEVELOPMENT.md
 		docs\PHASE0_AUTONOMOUS_PLATFORM_ARCHITECTURE.md = docs\PHASE0_AUTONOMOUS_PLATFORM_ARCHITECTURE.md
 		docs\SECURITY.md = docs\SECURITY.md
 		docs\SYSTEM_ARCHITECTURE.md = docs\SYSTEM_ARCHITECTURE.md
@@ -17,10 +17,17 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "docs", "docs", "{AB7FE6A3-B
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Phases", "Phases", "{3728212C-2A63-47AA-A7BB-DE32B364B0C9}"
 	ProjectSection(SolutionItems) = preProject
-		docs\Phases\README.md = docs\Phases\README.md
 		docs\Phases\PHASE-0-FOUNDATION.md = docs\Phases\PHASE-0-FOUNDATION.md
 		docs\Phases\PHASE-1-DOMAIN-CORE-AND-SAFETY-SEAM.md = docs\Phases\PHASE-1-DOMAIN-CORE-AND-SAFETY-SEAM.md
 		docs\Phases\PHASE-2-GLOBAL-DATA-AND-INTELLIGENCE-FOUNDATION.md = docs\Phases\PHASE-2-GLOBAL-DATA-AND-INTELLIGENCE-FOUNDATION.md
+		docs\Phases\PHASE-3-DETERMINISTIC-ANALYTICS.md = docs\Phases\PHASE-3-DETERMINISTIC-ANALYTICS.md
+		docs\Phases\PHASE-4-AI-LAYER.md = docs\Phases\PHASE-4-AI-LAYER.md
+		docs\Phases\PHASE-5-OPPORTUNITY-APPROVAL-CAPITAL.md = docs\Phases\PHASE-5-OPPORTUNITY-APPROVAL-CAPITAL.md
+		docs\Phases\PHASE-6-CONTINUOUS-OPERATION.md = docs\Phases\PHASE-6-CONTINUOUS-OPERATION.md
+		docs\Phases\PHASE-7-VALIDATION.md = docs\Phases\PHASE-7-VALIDATION.md
+		docs\Phases\PHASE-8-BOUNDED-AUTONOMY.md = docs\Phases\PHASE-8-BOUNDED-AUTONOMY.md
+		docs\Phases\README.md = docs\Phases\README.md
+		docs\Phases\ROADMAP.md = docs\Phases\ROADMAP.md
 		docs\Phases\VERIFICATION-LOG.md = docs\Phases\VERIFICATION-LOG.md
 	EndProjectSection
 EndProject
@@ -38,11 +45,11 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution 
 	ProjectSection(SolutionItems) = preProject
 		.editorconfig = .editorconfig
 		.gitignore = .gitignore
+		.github\workflows\ci.yml = .github\workflows\ci.yml
 		Directory.Build.props = Directory.Build.props
 		Directory.Packages.props = Directory.Packages.props
 		global.json = global.json
 		NuGet.config = NuGet.config
-		.github\workflows\ci.yml = .github\workflows\ci.yml
 	EndProjectSection
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI.Investment.Domain", "src\AI.Investment.Domain\AI.Investment.Domain.csproj", "{C1D5D51F-2A82-56DF-A10B-2CD01822514A}"
@@ -65,9 +72,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI.Investment.Integration.T
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AI.Investment.Api.Tests", "tests\AI.Investment.Api.Tests\AI.Investment.Api.Tests.csproj", "{6380E67C-7D20-54CE-B558-D28A5455A188}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AI.Investment.Dashboard", "src\\AI.Investment.Dashboard\\AI.Investment.Dashboard.csproj", "{A1B2C3D4-1111-4A2B-9C3D-000000000401}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AI.Investment.Dashboard", "src\AI.Investment.Dashboard\AI.Investment.Dashboard.csproj", "{A1B2C3D4-1111-4A2B-9C3D-000000000401}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AI.Investment.Dashboard.Tests", "tests\\AI.Investment.Dashboard.Tests\\AI.Investment.Dashboard.Tests.csproj", "{A1B2C3D4-2222-4A2B-9C3D-000000000402}"
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "AI.Investment.Dashboard.Tests", "tests\AI.Investment.Dashboard.Tests\AI.Investment.Dashboard.Tests.csproj", "{A1B2C3D4-2222-4A2B-9C3D-000000000402}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

@@ -350,6 +350,104 @@ public sealed class OperatingCycleRunnerTests
         Assert.Empty(_shadow.Decisions);
     }
 
+    /// <summary>
+    /// The per-cycle cost ceiling accumulates across the pass, rather than judging each proposal
+    /// on its own.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This is the test the limit did not have, and could not pass.</strong>
+    /// <c>MaxCostPerCycle</c> is read from configuration, documented in appsettings and evaluated
+    /// on every gate - and until now the figure it was compared against was a hard zero supplied
+    /// by the exposure provider, which is repository-scoped and has never been told which cycle it
+    /// is serving. Each proposal was therefore weighed against the ceiling alone and a cycle could
+    /// spend without bound, one affordable step at a time.
+    /// </para>
+    /// <para>
+    /// Here the plan spends twelve dollars before it proposes anything, against a ten dollar
+    /// ceiling and a budget with ample headroom - so the only thing that can stop it is the
+    /// ceiling, and the only way the ceiling can see the spend is if the runner hands the cycle's
+    /// own consumption to the limit engine. On the previous code this test executes the action.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task The_cycle_cost_ceiling_counts_what_the_cycle_has_already_spent()
+    {
+        GrantAutonomy();
+
+        // Budget headroom well above the ceiling, so a budget exhaustion cannot be mistaken for
+        // the limit binding. The two failure modes escalate for different reasons and this test
+        // is about exactly one of them.
+        var cycle = Cycle(CycleBudget.Create(TimeSpan.FromMinutes(10), Usd(100m), 50, 1));
+
+        var plan = new ScriptedWorkPlan(Template, context => context.Stage switch
+        {
+            CycleStage.Collect => new CycleStageResult
+            {
+                ModelSpend = Usd(12m),
+                ProviderCalls = 1,
+            },
+
+            CycleStage.ProposeAction => new CycleStageResult
+            {
+                ModelSpend = Usd(0.01m),
+                ProviderCalls = 0,
+                Proposal = Proposal(context.CycleId),
+            },
+
+            _ => CycleStageResult.Nothing(Currency.Usd),
+        });
+
+        var limits = LimitSet.Create([Limit.OfMoney(LimitKind.MaxCostPerCycle, Usd(10m))]);
+
+        var result = await Runner(plan, limits).RunAsync(cycle.CycleId, "worker-a");
+
+        Assert.True(result.Escalated);
+        Assert.Equal(0, plan.Executions);
+        Assert.Equal(EscalationReason.LimitBreach, Assert.Single(_escalations.Escalations).Reason);
+    }
+
+    /// <summary>
+    /// The same ceiling does not refuse a cycle that has stayed under it.
+    /// </summary>
+    /// <remarks>
+    /// The guard on the test above. A change that made the ceiling bind by making it bind always
+    /// would satisfy that one and destroy the limit's usefulness.
+    /// </remarks>
+    [Fact]
+    public async Task A_cycle_that_has_spent_little_still_passes_the_cost_ceiling()
+    {
+        GrantAutonomy();
+
+        var cycle = Cycle(CycleBudget.Create(TimeSpan.FromMinutes(10), Usd(100m), 50, 1));
+
+        var plan = new ScriptedWorkPlan(Template, context => context.Stage switch
+        {
+            CycleStage.Collect => new CycleStageResult
+            {
+                ModelSpend = Usd(1m),
+                ProviderCalls = 1,
+            },
+
+            CycleStage.ProposeAction => new CycleStageResult
+            {
+                ModelSpend = Usd(0.01m),
+                ProviderCalls = 0,
+                Proposal = Proposal(context.CycleId),
+            },
+
+            _ => CycleStageResult.Nothing(Currency.Usd),
+        });
+
+        var limits = LimitSet.Create([Limit.OfMoney(LimitKind.MaxCostPerCycle, Usd(500m))]);
+
+        var result = await Runner(plan, limits).RunAsync(cycle.CycleId, "worker-a");
+
+        Assert.False(result.Escalated);
+        Assert.Equal(1, plan.Executions);
+        Assert.Empty(_escalations.Escalations);
+    }
+
     [Fact]
     public async Task A_cycle_that_exhausts_its_budget_suspends_and_escalates()
     {

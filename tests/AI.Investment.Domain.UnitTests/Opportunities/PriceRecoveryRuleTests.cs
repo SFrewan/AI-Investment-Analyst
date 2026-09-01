@@ -122,11 +122,23 @@ public sealed class PriceRecoveryRuleTests
 
         var candidate = verdict.Candidate!;
 
-        // Three occurrences with a full horizon after them; two of them returned to their own prior
-        // high inside it.
+        // Three occurrences with a full horizon after them, and all three ended the horizon at or
+        // above where they started.
+        //
+        // THIS EXPECTATION CHANGED WHEN THE COUNTED EVENT DID. The rule used to count whether the
+        // price touched its own prior high somewhere inside the horizon - two of these three did -
+        // while the validation run scored whether the return beat a threshold. Two defensible
+        // questions, and not the same question, so the platform stated a probability of one and was
+        // marked against the other. It now counts what validation scores: the close a full horizon
+        // later against the close on the day of the trial.
+        //
+        // The third trial is the boundary, and worth keeping: it returns exactly 0.00%, which both
+        // the rule and OutcomeLabeller count as the event having happened, because both compare
+        // with >=. A trial sitting exactly on the threshold is how two implementations of "the same"
+        // comparison drift apart without anyone noticing.
         Assert.Equal(3, candidate.Trials);
-        Assert.Equal(2, candidate.Successes);
-        Assert.Equal(0.6667m, candidate.SuccessProbability);
+        Assert.Equal(3, candidate.Successes);
+        Assert.Equal(1.0000m, candidate.SuccessProbability);
 
         // The target is the highest close the series contains - a price this instrument traded at.
         Assert.Equal(130m, candidate.TargetPrice);

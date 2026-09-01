@@ -217,19 +217,30 @@ public sealed class EodhdProvider : IDataProvider
     }
 
     /// <summary>Replaces the configured key wherever it appears in text from outside.</summary>
-    internal string Redact(string text)
+    internal string Redact(string text) => Redact(text, _options.ApiKey);
+
+    /// <summary>
+    /// The same redaction, for the other connector that carries this credential.
+    /// </summary>
+    /// <remarks>
+    /// Static and shared rather than copied. The splits connector sends the same key on the same
+    /// subscription, and a second implementation of this would be a second place for it to drift -
+    /// which, for the one routine whose whole job is to keep a credential out of an exception
+    /// message, is not a risk worth taking to save eight lines.
+    /// </remarks>
+    internal static string Redact(string text, string apiKey)
     {
-        if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(_options.ApiKey))
+        if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(apiKey))
         {
             return text;
         }
 
-        var withoutRaw = text.Replace(_options.ApiKey, Redaction, StringComparison.Ordinal);
+        var withoutRaw = text.Replace(apiKey, Redaction, StringComparison.Ordinal);
 
         // The URI carries the escaped form, which is a different string when the key contains a
         // character that needed escaping.
         return withoutRaw.Replace(
-            Uri.EscapeDataString(_options.ApiKey),
+            Uri.EscapeDataString(apiKey),
             Redaction,
             StringComparison.Ordinal);
     }

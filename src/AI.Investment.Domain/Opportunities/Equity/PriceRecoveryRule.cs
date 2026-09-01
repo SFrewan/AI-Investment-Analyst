@@ -31,6 +31,18 @@ public enum PriceRecoveryRefusal
     /// it, to state how often it worked.
     /// </summary>
     NotEnoughOccurrences = 4,
+
+    /// <summary>
+    /// The condition holds, and it already held on the previous session. The opportunity for this
+    /// drawdown was raised when it began.
+    /// </summary>
+    /// <remarks>
+    /// Not a fault in the series, and not the rule declining to measure. A drawdown lasts for as
+    /// long as it lasts, and re-raising it every session it persists would turn one thing that
+    /// happened into a fortnight of separate claims - which is how a sample of seventy-seven
+    /// independent episodes came to look like eleven hundred predictions.
+    /// </remarks>
+    EpisodeAlreadyOpen = 5,
 }
 
 /// <summary>How far, how long, and how much history the rule requires.</summary>
@@ -43,14 +55,26 @@ public sealed record PriceRecoveryParameters(
     int MinimumSessions,
     decimal DrawdownRatio,
     int HorizonSessions,
-    int MinimumTrials)
+    int MinimumTrials,
+    decimal EventThresholdRatio = 0m)
 {
     /// <summary>
     /// The shipped settings: sixty sessions of history, a ten per cent drawdown, a recovery measured
     /// over twenty-one sessions, and at least five past occurrences before any rate is stated.
     /// </summary>
+    /// <remarks>
+    /// <see cref="EventThresholdRatio"/> is stated here only so the type is usable on its own. The
+    /// value that reaches production is the validation run's own threshold, handed in at composition
+    /// - see <c>DiscoveryOptions.ToSettings</c>. A second copy of that number is exactly the drift
+    /// this field exists to prevent, and a test asserts the two agree.
+    /// </remarks>
     public static PriceRecoveryParameters Standard { get; } =
-        new(MinimumSessions: 60, DrawdownRatio: 0.10m, HorizonSessions: 21, MinimumTrials: 5);
+        new(
+            MinimumSessions: 60,
+            DrawdownRatio: 0.10m,
+            HorizonSessions: 21,
+            MinimumTrials: 5,
+            EventThresholdRatio: 0m);
 
     /// <summary>Refuses settings that would make the rule meaningless rather than strict.</summary>
     public void Validate()
@@ -84,6 +108,16 @@ public sealed record PriceRecoveryParameters(
                 nameof(MinimumTrials),
                 "At least one past occurrence is needed before a rate can be measured at all. " +
                 $"Received {MinimumTrials}.");
+        }
+
+        // Bounded where a return is bounded below. A threshold at or under -100% would count every
+        // trial a success, which is a rate of one stated about nothing.
+        if (EventThresholdRatio <= -1m)
+        {
+            throw new DomainValidationException(
+                nameof(EventThresholdRatio),
+                "A return threshold must be greater than -100 per cent. " +
+                $"Received {EventThresholdRatio}.");
         }
     }
 }
@@ -232,6 +266,103 @@ public static class PriceRecoveryRule
                         MidpointRounding.ToEven))));
     }
 
+    /// <summary>
+    /// The verdict for the latest session, and nothing when the same drawdown was already open.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>One opportunity per episode, not one per session.</strong> A drawdown persists: once
+    /// an instrument is ten per cent below its peak it usually stays there for days or weeks, and
+    /// <see cref="Evaluate"/> answers "yes" on every one of them. Measured over the stored year that
+    /// turned seventy-seven independent drawdowns into eleven hundred candidates - a sample eleven
+    /// times larger than the evidence behind it, which would have made every rate, every calibration
+    /// bin and every hit count read as far more certain than it was.
+    /// </para>
+    /// <para>
+    /// <strong>The test is the series, not a stored flag.</strong> This asks whether the previous
+    /// session's window would also have produced a candidate. That is decidable from prices at or
+    /// before the decision instant, so it needs no state, gives the same answer on a live cycle and
+    /// on a replay of the same date years later, and cannot drift from whatever happens to be in a
+    /// table. A flag would have been simpler and would have made a historical rehearsal impossible.
+    /// </para>
+    /// <para>
+    /// Both windows are exactly <paramref name="windowSessions"/> long, so the comparison is between
+    /// two runs of the same rule rather than between the rule and a shorter version of itself.
+    /// </para>
+    /// </remarks>
+    /// <param name="series">
+    /// Up to <paramref name="windowSessions"/> + 1 closes, oldest first. The extra session is read
+    /// only to answer the question above; the screen still reads exactly the window.
+    /// </param>
+    /// <param name="parameters">The rule's stated judgements.</param>
+    /// <param name="windowSessions">How many sessions the screen itself looks at.</param>
+    public static PriceRecoveryVerdict EvaluateEpisode(
+        IReadOnlyList<ClosingPrice> series,
+        PriceRecoveryParameters parameters,
+        int windowSessions)
+    {
+        ArgumentNullException.ThrowIfNull(series);
+        ArgumentNullException.ThrowIfNull(parameters);
+
+        if (windowSessions < parameters.MinimumSessions)
+        {
+            throw new DomainValidationException(
+                nameof(windowSessions),
+                "The window the screen reads cannot be shorter than the history the rule requires. " +
+                $"Received {windowSessions} against {parameters.MinimumSessions} sessions.");
+        }
+
+        var verdict = Evaluate(Window(series, windowSessions, endOffset: 0), parameters);
+
+        if (!verdict.HasCandidate)
+        {
+            return verdict;
+        }
+
+        if (series.Count <= parameters.MinimumSessions)
+        {
+            // There is no evaluable session before this one, so nothing can be claimed about whether
+            // the drawdown was already open. Treating it as new is the only answer that does not
+            // silently discard the first opportunity a series is able to produce.
+            //
+            // The test this guard must not become again is `series.Count <= windowSessions`. A
+            // series shorter than the window is the ordinary case, not the first-window case: the
+            // platform asks for the last N sessions and is handed however many exist. Guarding on
+            // the window made every session of a short history a new episode, which over the stored
+            // year turned 77 drawdowns into 208 and reinstated the duplication this method exists to
+            // remove - silently, because each of those verdicts is individually correct.
+            return verdict;
+        }
+
+        var before = Evaluate(Window(series, windowSessions, endOffset: 1), parameters);
+
+        return before.HasCandidate ? Refused(PriceRecoveryRefusal.EpisodeAlreadyOpen) : verdict;
+    }
+
+    /// <summary>The last <paramref name="windowSessions"/> closes, ending one offset back.</summary>
+    private static List<ClosingPrice> Window(
+        IReadOnlyList<ClosingPrice> series,
+        int windowSessions,
+        int endOffset)
+    {
+        var end = series.Count - endOffset;
+        var start = end - windowSessions;
+
+        if (start < 0)
+        {
+            start = 0;
+        }
+
+        var window = new List<ClosingPrice>(end - start);
+
+        for (var i = start; i < end; i++)
+        {
+            window.Add(series[i]);
+        }
+
+        return window;
+    }
+
     /// <summary>The refusal in words, recorded where a discoverer explains why it found nothing.</summary>
     public static string Explain(PriceRecoveryRefusal refusal) => refusal switch
     {
@@ -253,6 +384,11 @@ public static class PriceRecoveryRule
             "the same condition has not occurred often enough in this series, with a full horizon " +
             "after it, for a recovery rate to be counted. The candidate is refused rather than " +
             "stated with a probability nobody measured.",
+
+        PriceRecoveryRefusal.EpisodeAlreadyOpen =>
+            "the condition holds, and it held on the previous session too. This drawdown was raised " +
+            "when it began; raising it again every session it lasts would count one episode many " +
+            "times over.",
 
         _ => "an unrecognised refusal, which is itself a reason to produce nothing.",
     };
@@ -341,14 +477,22 @@ public static class PriceRecoveryRule
 
             trials++;
 
-            for (var ahead = i + 1; ahead <= i + parameters.HorizonSessions; ahead++)
-            {
-                if (series[ahead].Close >= runningPeak)
-                {
-                    successes++;
+            // THE EVENT THE VALIDATION RUN SCORES, measured the way it measures it: the close a
+            // full horizon after the trial against the close on the day of the trial, compared with
+            // >= to the same threshold OutcomeLabeller applies.
+            //
+            // It used to count something else - whether the price touched its old peak at any point
+            // inside the horizon - while validation counted this. Both are defensible questions and
+            // they are not the same question, so the platform was stating a probability of one event
+            // and scoring it against another. Measured over the stored year that produced a Brier
+            // score of 0.55 against 0.11 for the rule's own event: a number that looked like a
+            // badly calibrated model and was actually a mismatch.
+            var horizonClose = series[i + parameters.HorizonSessions].Close;
+            var realised = (horizonClose - series[i].Close) / series[i].Close;
 
-                    break;
-                }
+            if (realised >= parameters.EventThresholdRatio)
+            {
+                successes++;
             }
         }
 

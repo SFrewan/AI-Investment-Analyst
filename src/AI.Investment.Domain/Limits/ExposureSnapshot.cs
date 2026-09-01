@@ -77,6 +77,57 @@ public sealed record ExposureSnapshot
             ? exposure
             : Money.Zero(Currency);
 
+    /// <summary>
+    /// The same snapshot, with what the operating cycle in hand has already spent.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Why this is a separate step rather than a field the provider fills.</strong> Every
+    /// other figure here is a property of the book and can be read from the ledger. This one is a
+    /// property of <em>the cycle currently being evaluated</em>, and the exposure provider is a
+    /// repository-scoped service that has never been told which cycle that is. It therefore
+    /// supplied a hard zero, and <c>MaxCostPerCycle</c> compared each proposal against the ceiling
+    /// on its own and never accumulated - a limit that read as configured and enforced in
+    /// <c>appsettings</c>, and was neither.
+    /// </para>
+    /// <para>
+    /// The runner knows the cycle, so the runner supplies the number. Nothing else does, which is
+    /// why this is deliberately not a defaulted argument on the provider: a caller that has no
+    /// cycle should not be able to pass zero and have it look like an answer.
+    /// </para>
+    /// <para>
+    /// Throws on a currency mismatch rather than converting, exactly as <see cref="Create"/> and
+    /// <see cref="Money"/> itself do. If an installation configures the operations budget in one
+    /// currency and its limits in another, the two figures are not comparable, and failing the
+    /// gate loudly is the only honest outcome - there is no exchange rate anywhere in this system.
+    /// </para>
+    /// </remarks>
+    public ExposureSnapshot WithCycleCost(Money cycleCost)
+    {
+        ArgumentNullException.ThrowIfNull(cycleCost);
+
+        if (cycleCost.IsNegative)
+        {
+            throw new DomainValidationException(
+                nameof(cycleCost),
+                "A cycle's spend is recorded as a positive amount. A negative one would buy back " +
+                "budget that was already spent.");
+        }
+
+        EnsureCurrency(Currency, cycleCost, nameof(cycleCost));
+
+        return new ExposureSnapshot(
+            Currency,
+            TotalExposure,
+            PeakEquity,
+            CurrentEquity,
+            RealisedLossToday,
+            cycleCost,
+            _actionsToday,
+            _exposureByInstrument,
+            LastRealisedLossAtUtc);
+    }
+
     /// <summary>Nothing at stake, nothing spent, nothing lost. The starting state.</summary>
     public static ExposureSnapshot Flat(Currency currency, Money equity)
     {

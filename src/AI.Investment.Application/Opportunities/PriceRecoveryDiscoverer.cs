@@ -88,13 +88,16 @@ public sealed class PriceRecoveryDiscoverer : IOpportunityDiscoverer
             return [];
         }
 
+        // One session more than the screen reads. The extra one is not screened; it is what lets
+        // the rule tell a drawdown that has just begun from one that has been open for a fortnight.
         var series = await _prices
-            .ReadAsync(subject, _settings.PriceAttribute, _settings.MaxSessions, nowUtc, cancellationToken)
+            .ReadAsync(subject, _settings.PriceAttribute, _settings.MaxSessions + 1, nowUtc, cancellationToken)
             .ConfigureAwait(false);
 
-        var verdict = PriceRecoveryRule.Evaluate(
+        var verdict = PriceRecoveryRule.EvaluateEpisode(
             series.Select(price => price.ToClosingPrice()).ToList(),
-            _settings.Rule);
+            _settings.Rule,
+            _settings.MaxSessions);
 
         LastRefusal = verdict.Refusal;
 
@@ -103,8 +106,17 @@ public sealed class PriceRecoveryDiscoverer : IOpportunityDiscoverer
             return [];
         }
 
-        return [Draft(subject, series, verdict.Candidate!, nowUtc)];
+        // The opportunity cites the window the screen actually read, not the extra session beside
+        // it. Evidence that includes a price the conclusion did not rest on is evidence nobody can
+        // check.
+        return [Draft(subject, Screened(series), verdict.Candidate!, nowUtc)];
     }
+
+    /// <summary>The window the screen read, without the extra session read beside it.</summary>
+    private IReadOnlyList<PricedObservation> Screened(IReadOnlyList<PricedObservation> series) =>
+        series.Count <= _settings.MaxSessions
+            ? series
+            : series.Skip(series.Count - _settings.MaxSessions).ToList();
 
     private Opportunity Draft(
         IngestionSubject subject,

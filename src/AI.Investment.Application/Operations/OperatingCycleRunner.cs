@@ -293,9 +293,15 @@ public sealed class OperatingCycleRunner
         //    book is already committed.
         var limitSet = await _limits.GetAsync(cancellationToken).ConfigureAwait(false);
 
-        var snapshot = await _exposure
-            .GetAsync(proposal.Economics.EstimatedExposure.Currency, cancellationToken)
-            .ConfigureAwait(false);
+        // The cycle's own spend is added here rather than read from the ledger, because it is the
+        // one figure in the snapshot that belongs to this cycle rather than to the book, and the
+        // exposure provider has never been told which cycle it is serving. Without this,
+        // MaxCostPerCycle compared each proposal against the ceiling on its own and never
+        // accumulated - configured, documented, and unable to bind.
+        var snapshot = (await _exposure
+                .GetAsync(proposal.Economics.EstimatedExposure.Currency, cancellationToken)
+                .ConfigureAwait(false))
+            .WithCycleCost(cycle.Consumption.ModelSpend);
 
         var verdict = LimitEngine.Evaluate(proposal, snapshot, limitSet, now);
 

@@ -62,7 +62,16 @@ public sealed record Money
     }
 
     /// <summary>Zero US dollars. Convenience for actions with no financial effect.</summary>
-    public static Money ZeroUsd { get; } = new(0m, Currency.Usd);
+    /// <remarks>
+    /// <strong>A fresh instance on every access, not a cached singleton.</strong> This type is
+    /// mapped as an owned entity, and the persistence provider associates an owned instance with
+    /// its owner by reference. One shared instance held by two owners in the same save is one
+    /// object with two owners, which the provider resolves by writing one of them as null - it
+    /// surfaced here as a not-null violation the first time two sources were seeded together.
+    /// Value equality is unaffected: this is a record, so two instances with the same values are
+    /// equal and hash alike. Same rule, same reason, as <c>LedgerAccount</c>.
+    /// </remarks>
+    public static Money ZeroUsd => new(0m, Currency.Usd);
 
     public Money Add(Money other)
     {
@@ -119,8 +128,28 @@ public sealed record Money
         return value.Negate();
     }
 
+    /// <summary>
+    /// The amount and its currency, in a form that does not depend on the amount's scale.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This text is hashed.</strong> <c>ActionFingerprint</c> takes a proposal's estimated
+    /// cost and exposure through here, and an approval token is bound to that hash - so the string
+    /// has to be a function of the value alone. It was not: a decimal carries its scale, and a
+    /// money column declared <c>numeric(18,4)</c> hands every amount back at scale four. The same
+    /// zero was <c>"0 USD"</c> before a save and <c>"0.0000 USD"</c> after one, which would have
+    /// made every approval fail against a reloaded proposal.
+    /// </para>
+    /// <para>
+    /// Equality and hashing were never affected - <see cref="decimal"/> already compares and
+    /// hashes across scales. Only the text moved, which is precisely why nothing caught it. See
+    /// <see cref="CanonicalNumber"/> for the formatting rule and its reasoning.
+    /// </para>
+    /// </remarks>
     public override string ToString() =>
-        string.Create(CultureInfo.InvariantCulture, $"{Amount} {Currency.Code}");
+        string.Create(
+            CultureInfo.InvariantCulture,
+            $"{CanonicalNumber.Text(Amount)} {Currency.Code}");
 
     private static void EnsureSameCurrency(Money left, Money right)
     {

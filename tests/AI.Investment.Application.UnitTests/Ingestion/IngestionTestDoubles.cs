@@ -1,6 +1,8 @@
 using System.Runtime.CompilerServices;
 using AI.Investment.Application.Abstractions;
+using AI.Investment.Application.Actions;
 using AI.Investment.Application.Ingestion;
+using AI.Investment.Domain.Actions;
 using AI.Investment.Domain.Ingestion;
 using AI.Investment.Domain.Retention;
 using AI.Investment.Domain.Sources;
@@ -248,5 +250,61 @@ internal sealed class StubRateLimiter : IProviderRateLimiter
     {
         AcquireAttempts++;
         return Task.FromResult(_allow);
+    }
+}
+
+/// <summary>
+/// An action gateway that actually claims idempotency keys, like the real one does.
+/// </summary>
+/// <remarks>
+/// <para>
+/// <see cref="StubActionGateway"/> honours a fixed outcome and never deduplicates, which is right
+/// for asking "did this route through the seam". It cannot answer "does a second attempt fetch
+/// again", because that question is decided by the key claim in
+/// <c>ActionGateway.ExecuteAsync</c> - so this double models exactly that one step and nothing
+/// else: first claim wins, later claims are suppressed.
+/// </para>
+/// <para>
+/// It records every key it was offered, so a test can assert not only what happened but why -
+/// two identical keys, or two different ones.
+/// </para>
+/// </remarks>
+internal sealed class ClaimingActionGateway : IActionGateway
+{
+    private static readonly DateTime At = new(2026, 8, 24, 12, 0, 0, DateTimeKind.Utc);
+
+    private readonly HashSet<string> _claimed = new(StringComparer.Ordinal);
+
+    /// <summary>Every idempotency key offered, in order.</summary>
+    public List<string> Keys { get; } = [];
+
+    /// <summary>How many times the effect actually ran - the external fetch count.</summary>
+    public int EffectInvocations { get; private set; }
+
+    public async Task<ActionOutcome<TResult>> DispatchAsync<TResult>(
+        ActionProposal proposal,
+        Func<CancellationToken, Task<TResult>> effect,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(proposal);
+        ArgumentNullException.ThrowIfNull(effect);
+
+        Keys.Add(proposal.IdempotencyKey);
+
+        var decision = PolicyDecision.Execute(proposal, "claiming stub", ["stub@1"], At);
+
+        if (!_claimed.Add(proposal.IdempotencyKey))
+        {
+            return ActionOutcome<TResult>.DuplicateSuppressed(decision);
+        }
+
+        EffectInvocations++;
+
+        var result = await effect(cancellationToken).ConfigureAwait(false);
+
+        var execution = ActionExecution.Start(proposal, decision, At);
+        execution.MarkSucceeded(At);
+
+        return ActionOutcome<TResult>.Executed(decision, result, execution);
     }
 }

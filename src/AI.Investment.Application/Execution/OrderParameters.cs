@@ -1,5 +1,5 @@
-using System.Globalization;
 using AI.Investment.Domain.Actions;
+using AI.Investment.Domain.ValueObjects;
 
 namespace AI.Investment.Application.Execution;
 
@@ -20,15 +20,17 @@ public sealed record OrderParameters(
     decimal Price,
     string CurrencyCode) : IActionParameters
 {
-    public string Describe()
-    {
-        var culture = CultureInfo.InvariantCulture;
-
-        return string.Concat(
+    /// <remarks>
+    /// The two decimals go through <see cref="CanonicalNumber"/> rather than a bare
+    /// <c>ToString</c>, for the reason this type's own remarks give: the text is hashed, so it
+    /// must be a function of the values and not of the scale they happen to carry. A quantity
+    /// read back from a numeric column arrives padded, and padding would move the fingerprint.
+    /// </remarks>
+    public string Describe() =>
+        string.Concat(
             "instrument='", Instrument,
             "', side=", Side.ToString(),
-            ", quantity=", Quantity.ToString(culture),
-            ", price=", Price.ToString(culture),
+            ", quantity=", CanonicalNumber.Text(Quantity),
+            ", price=", CanonicalNumber.Text(Price),
             " ", CurrencyCode);
-    }
 }

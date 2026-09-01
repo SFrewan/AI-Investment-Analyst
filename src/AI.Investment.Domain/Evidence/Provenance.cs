@@ -98,6 +98,25 @@ public sealed record Provenance
     /// <summary>When this system fetched or produced it.</summary>
     public DateTime RetrievedAtUtc { get; }
 
+    /// <summary>An equal instance that no other entity owns.</summary>
+    /// <remarks>
+    /// <para>
+    /// Provenance is mapped as an owned entity, and the persistence provider associates an owned
+    /// instance with its owner by reference. A normaliser that builds one provenance outside its
+    /// loop - which is the natural way to write it, since every row of a document shares the same
+    /// retrieval - hands the same object to every observation it produces. The provider writes the
+    /// provenance columns for the first and omits them for the rest.
+    /// </para>
+    /// <para>
+    /// So <see cref="Observations.Observation.RecordFact"/> copies, and this is what it calls.
+    /// Value equality is unaffected: this is a record, so the copy is equal to the original and
+    /// hashes alike. The same rule already applies to <c>IngestionSubject</c>, <c>DateRange</c> and
+    /// <c>LedgerAccount</c>; this was the member of that family that had not been closed.
+    /// </para>
+    /// </remarks>
+    public Provenance Copy() =>
+        new(SourceId, SourceRecordId, SourceUrl, AsOfUtc, PublishedAtUtc, RetrievedAtUtc);
+
     public static Provenance Create(
         SourceId sourceId,
         DateTime asOfUtc,

@@ -260,4 +260,35 @@ public sealed class ObservationTests
 
         Assert.Null(observation.Subject.Identifier);
     }
+
+    /// <summary>
+    /// Every observation gets its own subject instance, never the caller's.
+    /// </summary>
+    /// <remarks>
+    /// A normaliser turns one payload into hundreds of observations and naturally hands the same
+    /// subject object to all of them. The persistence provider owns a value by reference, so one
+    /// shared instance belonged to the first observation and was silently absent from the rest:
+    /// the database refused the batch for a null subject_kind and an entire cycle's observations
+    /// were lost. Equal in value and separate in identity is what makes that impossible.
+    /// </remarks>
+    [Fact]
+    public void Every_observation_gets_its_own_subject_instance()
+    {
+        var shared = IngestionSubject.Create("Security", "AAPL.US");
+
+        var first = Observation.RecordFact(
+            shared, "price.close", ObservationValue.Number(226.5m), Sane());
+        var second = Observation.RecordFact(
+            shared, "price.close", ObservationValue.Number(227.5m), Sane());
+
+        Assert.NotSame(shared, first.Subject);
+        Assert.NotSame(shared, second.Subject);
+        Assert.NotSame(first.Subject, second.Subject);
+
+        // Separate instances, identical subjects. Nothing about the meaning changes.
+        Assert.Equal(shared, first.Subject);
+        Assert.Equal(shared, second.Subject);
+        Assert.Equal("Security", first.Subject.Kind);
+        Assert.Equal("AAPL.US", first.Subject.Identifier);
+    }
 }

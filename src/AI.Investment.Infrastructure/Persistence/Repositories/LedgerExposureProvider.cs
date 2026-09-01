@@ -81,6 +81,13 @@ public sealed class LedgerExposureProvider : IExposureProvider
             peak,
             equity,
             lossesToday.IsNegative ? Money.Zero(currency) : lossesToday,
+
+            // Zero, and correctly so: what the operating cycle in hand has spent is a property of
+            // that cycle, and this class is repository-scoped and has never been told which cycle
+            // it is serving. OperatingCycleRunner supplies the real figure through
+            // ExposureSnapshot.WithCycleCost before the limit engine sees the snapshot. A caller
+            // that evaluates limits without a cycle genuinely has no cycle cost, and zero is the
+            // truthful answer for it.
             Money.Zero(currency),
             actionsToday,
             byInstrument,

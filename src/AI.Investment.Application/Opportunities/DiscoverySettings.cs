@@ -63,6 +63,36 @@ public sealed record DiscoverySettings
     /// </remarks>
     public int MaxSessions { get; init; } = 120;
 
+    /// <summary>
+    /// The registered source share splits are acquired from, or blank to use only what is stored.
+    /// </summary>
+    /// <remarks>
+    /// Configurable for the same reason <see cref="PriceSourceId"/> is: which vendor supplies an
+    /// installation's corporate actions is the installation's fact. Every gate still applies to
+    /// whatever is named - registered, admissible under its recorded licensing, connected, and
+    /// within its rate limit - so naming a source here grants nothing the registry has not.
+    /// </remarks>
+    public string SplitSourceId { get; init; } = "eodhd-splits";
+
+    /// <summary>The observation attribute share splits are read from.</summary>
+    /// <remarks>
+    /// Splits are observations like any other - a thing a source said about a security, with
+    /// provenance and a point-in-time read - rather than a table of their own. That is what lets a
+    /// replay see the splits that were known then rather than the ones known now.
+    /// </remarks>
+    public string SplitAttribute { get; init; } = "security.split-ratio";
+
+    /// <summary>
+    /// The largest single-session move left unexplained by a known split before the whole series
+    /// is refused.
+    /// </summary>
+    /// <remarks>
+    /// A judgement, and stated here beside the rule's other judgements for the same reason: it
+    /// decides what the platform is willing to screen. See <see cref="SplitAdjustment"/> for why
+    /// refusing is the safe direction to be wrong in.
+    /// </remarks>
+    public decimal MaxUnexplainedMove { get; init; } = SplitAdjustment.DefaultMaxUnexplainedMove;
+
     /// <summary>The screen's own parameters.</summary>
     public PriceRecoveryParameters Rule { get; init; } = PriceRecoveryParameters.Standard;
 }

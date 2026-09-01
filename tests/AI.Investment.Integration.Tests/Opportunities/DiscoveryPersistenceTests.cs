@@ -44,8 +44,19 @@ public sealed class DiscoveryPersistenceTests : IAsyncLifetime
 
     private static readonly DateTime Now = FirstSession.AddDays(60);
 
+    /// <summary>
+    /// A series whose drawdown begins at its last session.
+    /// </summary>
+    /// <remarks>
+    /// The last close is the first one that is ten per cent below the running peak: the session
+    /// before it is at the peak. That matters since the screen became episode-aware. It now raises a
+    /// candidate for the session a drawdown opens on and refuses the sessions that continue it, so a
+    /// fixture ending in the middle of a fall - which this one used to, at 90 then 100 - is an
+    /// arrangement in which the correct answer is no candidate at all. It ends where an opportunity
+    /// is actually raised.
+    /// </remarks>
     private static readonly decimal[] FallsAndRecovers =
-        [100m, 110m, 120m, 115m, 100m, 95m, 130m, 100m, 90m, 100m];
+        [100m, 110m, 120m, 115m, 100m, 95m, 130m, 100m];
 
     private static readonly DiscoverySettings Settings = new()
     {

@@ -103,6 +103,21 @@ public sealed class EquityReviewWorkPlan : ICycleWorkPlan
     private DateTime _asAtUtc;
     private IngestionSubject? _subject;
     private IReadOnlyList<PricedObservation> _series = [];
+
+    /// <summary>
+    /// The window the screen actually read, without the extra session read beside it.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="_series"/> carries one session more than the screen looks at, so the rule can tell
+    /// a new drawdown from one already open. That extra close is not part of the conclusion, so it
+    /// is not part of the evidence the opportunity cites and it is not the session the score is
+    /// stamped at. Evidence that includes a price the conclusion did not rest on is evidence nobody
+    /// can check.
+    /// </remarks>
+    private IReadOnlyList<PricedObservation> Screened =>
+        _series.Count <= _settings.MaxSessions
+            ? _series
+            : _series.Skip(_series.Count - _settings.MaxSessions).ToList();
     private PriceRecoveryVerdict? _verdict;
     private Opportunity? _candidate;
     private OpportunityEconomics? _economics;
@@ -312,9 +327,41 @@ public sealed class EquityReviewWorkPlan : ICycleWorkPlan
             };
         }
 
-        _series = await _prices
-            .ReadAsync(subject, _settings.PriceAttribute, _settings.MaxSessions, _asAtUtc, cancellationToken)
+        // Split-adjusted, and a refusal is a real outcome rather than an empty list. The stored
+        // close is the raw one, so a split leaves a step the screen would read as a spectacular
+        // fall and score with complete confidence - the only place in this platform that produces
+        // a confident wrong number instead of a refusal.
+        var adjusted = await _prices
+            .ReadAdjustedAsync(
+                subject,
+                _settings.PriceAttribute,
+                _settings.SplitAttribute,
+
+                // One more than the screen reads. The extra session is not screened; it is what
+                // lets the rule tell a drawdown that has just begun from one already open.
+                _settings.MaxSessions + 1,
+                _asAtUtc,
+                _settings.MaxUnexplainedMove,
+                cancellationToken)
             .ConfigureAwait(false);
+
+        if (!adjusted.IsUsable)
+        {
+            _obstacle = string.Create(
+                CultureInfo.InvariantCulture,
+                $"the price series for {subject} was not screened: {adjusted.Explanation}");
+
+            // Not a provider failure - the fetch worked and the data is there. The pass simply
+            // declines to draw a conclusion from a series it cannot restate, and says so.
+            return new CycleStageResult
+            {
+                ModelSpend = Money.Zero(Currency.Create(_settings.CurrencyCode)),
+                ProviderCalls = acquisition is null ? 0 : 1,
+                EvidenceUntrustworthy = true,
+            };
+        }
+
+        _series = adjusted.Observations;
 
         if (acquisition is null)
         {
@@ -376,9 +423,10 @@ public sealed class EquityReviewWorkPlan : ICycleWorkPlan
             return Nothing();
         }
 
-        _verdict = PriceRecoveryRule.Evaluate(
+        _verdict = PriceRecoveryRule.EvaluateEpisode(
             _series.Select(price => price.ToClosingPrice()).ToList(),
-            _settings.Rule);
+            _settings.Rule,
+            _settings.MaxSessions);
 
         if (!_verdict.HasCandidate)
         {
@@ -530,7 +578,7 @@ public sealed class EquityReviewWorkPlan : ICycleWorkPlan
                     "successes / trials, counted over the cited closes",
                     candidate.Source.DiscovererId,
                     PriceRecoveryRule.Version,
-                    _series[^1].SessionCloseUtc,
+                    Screened[^1].SessionCloseUtc,
                     Inputs())),
             _asAtUtc);
 
@@ -540,11 +588,12 @@ public sealed class EquityReviewWorkPlan : ICycleWorkPlan
     /// <summary>Every close the rate was counted over, named by its position in the series.</summary>
     private List<CalculationInput> Inputs()
     {
-        var inputs = new List<CalculationInput>(_series.Count);
+        var screened = Screened;
+        var inputs = new List<CalculationInput>(screened.Count);
 
-        for (var i = 0; i < _series.Count; i++)
+        for (var i = 0; i < screened.Count; i++)
         {
-            var price = _series[i];
+            var price = screened[i];
 
             inputs.Add(CalculationInput.Create(
                 string.Create(CultureInfo.InvariantCulture, $"close-{i + 1:D4}"),

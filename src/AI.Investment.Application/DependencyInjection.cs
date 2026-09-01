@@ -11,6 +11,7 @@ using AI.Investment.Application.Abstractions;
 using AI.Investment.Application.Operations;
 using AI.Investment.Application.Operators;
 using AI.Investment.Application.Opportunities;
+using AI.Investment.Application.Portfolio;
 using AI.Investment.Application.Validation;
 using AI.Investment.Application.Retention;
 using AI.Investment.Application.Sources.ActivateSource;
@@ -60,6 +61,18 @@ public static class DependencyInjection
         // The capital read model. Read only: there is no write path on ILedgerReport, and a balance
         // is a projection of immutable entries rather than a field anything can set.
         services.AddScoped<ILedgerReport, LedgerReport>();
+
+        // The portfolio read model, registered beside the capital one because they are the same
+        // kind of thing: a projection over immutable events with no write path of its own.
+        //
+        // Registered as the concrete type rather than behind an interface, because that is what
+        // PortfolioController asks for. It was missing until now, and the endpoint could not be
+        // served: the controller activator resolves every constructor parameter from the
+        // container, so an unregistered dependency fails before the action runs. The endpoint
+        // tests did not catch it because they asserted only that the response was not 401, 403 or
+        // 404 - and a 500 satisfies all three. CompositionTests now constructs every controller
+        // from the real container, so the next one of these fails a test that names it.
+        services.AddScoped<PortfolioReader>();
 
         // The second half of ingesting: what the archived bytes mean. Scoped, and constructable
         // with no normalisers registered at all - an installation with none quarantines every

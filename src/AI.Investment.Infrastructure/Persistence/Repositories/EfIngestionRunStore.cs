@@ -28,10 +28,56 @@ public sealed class EfIngestionRunStore : IIngestionRunStore
         _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
     }
 
+    /// <summary>
+    /// Writes the run to the ledger. Retries once on a cleared tracker if the first attempt is
+    /// defeated by unrelated work already pending on this context.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>This retry exists because a lost ledger row is unrecoverable, and it has cost this
+    /// platform an instrument.</strong> The action seam claims an idempotency key <em>before</em>
+    /// the effect runs, and this store records the run <em>after</em> it. If the effect succeeds
+    /// and this write then throws, the claim stands and the row does not - so the request can never
+    /// be fetched again (the seam suppresses it as a duplicate) and can never be recorded (nothing
+    /// re-runs it). That happened to <c>AAPL.US</c> prices during the Block 2B backfill, and the
+    /// state it produced cannot be undone: <c>ProcessedAction</c> deletion is refused by
+    /// <see cref="AppDbContext"/>'s write guard unconditionally, by design.
+    /// </para>
+    /// <para>
+    /// The failure mode is not exotic. This store shares the caller's scoped context, so anything
+    /// else that has already poisoned the change tracker - a shared owned-entity instance, a
+    /// half-applied domain change, a previous save that threw - defeats a write that has nothing
+    /// to do with it. Clearing the tracker and re-adding the run isolates the ledger from that.
+    /// </para>
+    /// <para>
+    /// <strong>What clearing costs.</strong> Other pending changes on this context are discarded.
+    /// That is a real loss, and it is the right trade: this path only runs when a save on this
+    /// context has just failed, so those changes were not going to commit either - and the
+    /// alternative is a permanently inconsistent ledger. Nothing is smuggled past the seam by it:
+    /// <c>SaveChangesInternalAsync</c> still runs the guard, which still admits only the exempt
+    /// append-only types.
+    /// </para>
+    /// </remarks>
     public async Task RecordAsync(IngestionRun run, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(run);
 
+        try
+        {
+            await AddAndSaveAsync(run, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is DbUpdateException or InvalidOperationException)
+        {
+            // Deliberately narrow: these two are what a poisoned tracker throws. A cancellation,
+            // a connection failure or a programming error still propagates on the first attempt.
+            _dbContext.ChangeTracker.Clear();
+
+            await AddAndSaveAsync(run, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task AddAndSaveAsync(IngestionRun run, CancellationToken cancellationToken)
+    {
         var entry = await _dbContext.IngestionRuns.AddAsync(run, cancellationToken).ConfigureAwait(false);
 
         // The fingerprint is derived rather than domain state, so it lives as a shadow property
