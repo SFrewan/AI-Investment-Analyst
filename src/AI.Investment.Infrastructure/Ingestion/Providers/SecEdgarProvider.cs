@@ -66,29 +66,74 @@ public sealed class SecEdgarProvider : IDataProvider
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        var cik = SecEdgarEndpoints.NormaliseCik(request.Subject.Identifier);
+        // Two request shapes, kept apart here rather than merged.
+        //
+        // Every other category names a company and resolves to a CIK path. A market-wide frame
+        // names a PERIOD and has no CIK at all. Routing them through one identifier check would
+        // mean either accepting a period where a company belongs or the reverse, and the failure
+        // would not be visible: a company path built from a period subject returns somebody's
+        // accounts, and it would be archived as a cross-section of the market.
+        string path;
+        string recordId;
 
-        if (cik is null)
+        if (request.Category == DataCategory.MarketWideDisclosure)
         {
-            throw new InvalidOperationException(
-                $"EDGAR identifies companies by CIK, and '{request.Subject}' does not contain one. " +
-                "A ticker must be resolved to a CIK before ingestion.");
+            var frame = SecEdgarEndpoints.ParseFrame(request.Subject.Identifier);
+
+            if (frame is null)
+            {
+                throw new InvalidOperationException(
+                    $"A market-wide frame is identified as 'taxonomy/concept/unit/period', and " +
+                    $"'{request.Subject}' is not one. Segments are letters and digits only: an " +
+                    "identifier carrying a separator or an escape is an attempt to reach a " +
+                    "different endpoint, not a badly typed period.");
+            }
+
+            path = SecEdgarEndpoints.Frames(frame);
+            recordId = frame.ToString();
         }
-
-        var path = SecEdgarEndpoints.ForCategory(request.Category, cik);
-
-        if (path is null)
+        else
         {
-            throw new InvalidOperationException(
-                $"EDGAR serves no endpoint for {request.Category}. The capability check should have " +
-                "refused this request before it reached the connector.");
+            var cik = SecEdgarEndpoints.NormaliseCik(request.Subject.Identifier);
+
+            if (cik is null)
+            {
+                throw new InvalidOperationException(
+                    $"EDGAR identifies companies by CIK, and '{request.Subject}' does not contain " +
+                    "one. A ticker must be resolved to a CIK before ingestion.");
+            }
+
+            var companyPath = SecEdgarEndpoints.ForCategory(request.Category, cik);
+
+            if (companyPath is null)
+            {
+                throw new InvalidOperationException(
+                    $"EDGAR serves no endpoint for {request.Category}. The capability check should " +
+                    "have refused this request before it reached the connector.");
+            }
+
+            path = companyPath;
+            recordId = $"CIK{cik}";
         }
 
         using var message = new HttpRequestMessage(HttpMethod.Get, path);
 
         // Required by the SEC's fair-access policy. Set per request rather than once on the
         // client so it cannot be silently lost by a client reconfigured elsewhere.
-        message.Headers.UserAgent.ParseAdd(_options.UserAgent);
+        //
+        // Added WITHOUT validation, deliberately. The SEC documents the required form as
+        // "Sample Company Name AdminContact@domain.com", and an e-mail address is not a valid
+        // User-Agent product token: '@' is not in RFC 7230's token character set. ParseAdd
+        // therefore throws FormatException on the exact value the SEC asks for, which meant this
+        // connector could not complete a single request - every company failed identically, before
+        // the wire, with a message that named the exception and not the cause. Sending what the
+        // service asked for matters more than satisfying a parser stricter than the service.
+        message.Headers.TryAddWithoutValidation("User-Agent", _options.UserAgent);
+
+        // Accept-Encoding is deliberately NOT set here. The handler is configured for automatic
+        // decompression, which adds the header itself and, unlike a hand-written one, also unwraps
+        // the response. Setting it by hand asks for gzip that nothing decompresses.
+
         message.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
 
         using var response = await _httpClient
@@ -107,7 +152,7 @@ public sealed class SecEdgarProvider : IDataProvider
             payload,
             response.Content.Headers.ContentType?.MediaType ?? "application/json",
             _clock.UtcNow,
-            sourceRecordId: $"CIK{cik}");
+            sourceRecordId: recordId);
 
         // No continuation token: these endpoints return one complete document. Inventing paging
         // the provider does not offer would be building a request shape its terms never described.
@@ -136,9 +181,16 @@ public sealed class SecEdgarProvider : IDataProvider
                 DataCategory.CompanyProfile,
                 DataCategory.FinancialStatements,
                 DataCategory.EarningsDisclosure,
+                DataCategory.MarketWideDisclosure,
             ],
             [Region.UnitedStates],
-            ["Company"],
+
+            // Two kinds, and the pairing is enforced in FetchAsync rather than here. Capabilities
+            // are declared as sets and checked as sets, so this list alone would also permit a
+            // company subject with a market-wide category. The connector refuses that pairing on
+            // the way out, which is where the knowledge of which endpoint takes which subject
+            // actually lives.
+            ["Company", SecEdgarEndpoints.PeriodSubjectKind],
             supportsWindow: false,
             maxWindowDuration: null,
             quota: ProviderQuota.PerSecond(requestsPerSecond));

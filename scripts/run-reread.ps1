@@ -1,0 +1,106 @@
+#requires -Version 5.1
+<#
+    REPLAY THE ARCHIVED PRICE PAYLOADS THROUGH THE REAL NORMALISER. READ-ONLY.
+
+    ZERO provider calls of any kind. No EODHD call, no SEC call, no price, split or dividend
+    acquisition. No acquisition switch is set at any point in this script. NO SPLIT BATCH IS RUN
+    and NO APPROVAL IS CHANGED.
+
+    Nothing is written to the database: run, observation and quarantine counts are asserted
+    unchanged, and every quarantined payload is asserted still quarantined under the same rule.
+    No payload is reprocessed through the pipeline, released, reclassified or removed - the
+    normaliser is called directly as the pure function of bytes that it is, in memory, and its
+    results are read and discarded.
+
+    NOTHING IS INSTALLED, AMENDED OR MIGRATED. Gate 6, its sealed declaration, the normaliser and
+    the pipeline are unchanged. One report is written: artifacts\verify\gate6-price-payload-reread.md
+
+    NOTE ON THE CONNECTOR SWITCH. Clearing the environment overrides does NOT disable a connector:
+    appsettings.Development.json sets Providers:Eodhd:Enabled to true and the test host runs in the
+    Development environment. Both switches are therefore set to false EXPLICITLY.
+#>
+
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$global:LASTEXITCODE = 0
+
+$root = Split-Path -Parent $PSScriptRoot
+
+function Clear-Switches {
+    Remove-Item Env:\AIINV_ACQUISITION_BATCH -ErrorAction SilentlyContinue
+    Remove-Item Env:\AIINV_BATCH_INDEX -ErrorAction SilentlyContinue
+    Remove-Item Env:\AIINV_ACQUISITION_EXECUTE -ErrorAction SilentlyContinue
+    Remove-Item Env:\AIINV_SPLIT_AUTHORIZATION -ErrorAction SilentlyContinue
+    Remove-Item Env:\AIINV_SPLIT_ACCOUNTING -ErrorAction SilentlyContinue
+    Remove-Item Env:\AIINV_SPLIT_BATCH -ErrorAction SilentlyContinue
+    Remove-Item Env:\AIINV_SPLIT_BATCH_INDEX -ErrorAction SilentlyContinue
+    Remove-Item Env:\AIINV_POST_ACQUISITION -ErrorAction SilentlyContinue
+    Remove-Item Env:\AIINV_QUARANTINE_SURVEY -ErrorAction SilentlyContinue
+    Remove-Item Env:\AIINV_PAYLOAD_REREAD -ErrorAction SilentlyContinue
+    Remove-Item Env:\AIINV_RESUME_READINESS -ErrorAction SilentlyContinue
+    Remove-Item Env:\AIINV_FAILURE_DIAGNOSIS -ErrorAction SilentlyContinue
+    Remove-Item Env:\AIINV_ACQUISITION_AUDIT -ErrorAction SilentlyContinue
+    Remove-Item Env:\AIINV_LEDGER_FORENSICS -ErrorAction SilentlyContinue
+    Remove-Item Env:\AIINV_ACQUISITION_DRY_RUN -ErrorAction SilentlyContinue
+}
+
+Clear-Switches
+$localSettings = Join-Path $PSScriptRoot 'verify.local.ps1'
+if (Test-Path -Path $localSettings) { . $localSettings }
+Clear-Switches
+
+$env:Providers__SecEdgar__Enabled = 'false'
+$env:Providers__Eodhd__Enabled = 'false'
+
+Write-Host ''
+Write-Host '  Providers:Eodhd:Enabled and Providers:SecEdgar:Enabled are set to FALSE for this run.'
+Write-Host '  READ-ONLY: nothing is acquired, nothing is written, no payload is released.'
+
+$code = 0
+
+try {
+    $env:AIINV_PAYLOAD_REREAD = '1'
+
+    & powershell -NoProfile -ExecutionPolicy Bypass `
+        -File (Join-Path $PSScriptRoot 'gate-tests.ps1') `
+        -Filter 'FullyQualifiedName~PricePayloadRereadTests' `
+        -LogName 'payload-reread.log' `
+        -Label 'archived price payloads replayed through the real normaliser, in memory' | Out-Host
+
+    $code = [int]$LASTEXITCODE
+}
+finally { Remove-Item Env:\AIINV_PAYLOAD_REREAD -ErrorAction SilentlyContinue }
+
+if ($code -eq 0) {
+    & powershell -NoProfile -ExecutionPolicy Bypass `
+        -File (Join-Path $PSScriptRoot 'gate-tests.ps1') `
+        -Filter 'FullyQualifiedName~AI.Investment' `
+        -LogName 'reread-full.log' -Label 'full Release suite, connectors off' | Out-Host
+
+    $code = [int]$LASTEXITCODE
+}
+
+Remove-Item Env:\Providers__Eodhd__Enabled -ErrorAction SilentlyContinue
+Remove-Item Env:\Providers__SecEdgar__Enabled -ErrorAction SilentlyContinue
+Clear-Switches
+
+Write-Host ''
+Write-Host '=== Payload re-read outcome'
+
+$report = Join-Path $root 'artifacts\verify\gate6-price-payload-reread.md'
+
+if (Test-Path $report) {
+    Get-Content $report |
+        Where-Object { $_ -match '^\| `|Payloads replayed|Total rows accepted' } |
+        Select-Object -First 40 |
+        ForEach-Object { Write-Host ('  ' + ($_ -replace '[`*]', ' ')) }
+}
+else { Write-Host '  no re-read report written.' }
+
+Write-Host ''
+Write-Host '  NOTHING WAS ACQUIRED. No EODHD call, no SEC call, no price, no split, no dividend.'
+Write-Host '  NOTHING WAS RELEASED. Every quarantined payload is still quarantined, same rule.'
+Write-Host '  NOTHING WAS INSTALLED OR AMENDED. Gate 6 and the normaliser are unchanged.'
+
+exit $code

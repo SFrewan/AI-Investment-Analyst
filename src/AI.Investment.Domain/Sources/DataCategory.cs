@@ -34,6 +34,28 @@ public enum DataCategory
     ForeignExchange = 11,
     Commodities = 12,
 
+    /// <summary>
+    /// A cross-section of many filers at one period, rather than one filer's history.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Every other category above answers a question about <em>a</em> subject: this company's
+    /// filings, that instrument's prices. This one answers a question about a <em>period</em> -
+    /// which companies reported a figure for it, and what they reported. EDGAR's XBRL frames serve
+    /// exactly that, and nothing else in the taxonomy could carry it: a request whose subject is a
+    /// quarter is not a request about a company, and filing it under
+    /// <see cref="FinancialStatements"/> would let a market-wide document be read as one firm's
+    /// accounts.
+    /// </para>
+    /// <para>
+    /// It exists because an unbiased universe cannot be built from per-company endpoints. Asking
+    /// each company in a list whether it was reporting can only ever describe the list, and a list
+    /// of companies that exist today is a list of survivors. Asking a period who reported it
+    /// includes the ones that later died, which is the whole point.
+    /// </para>
+    /// </remarks>
+    MarketWideDisclosure = 18,
+
     // --- Future opportunity domains. Declared so the taxonomy is stable, NOT implemented.
     ProductCatalogue = 13,
     MarketplaceListings = 14,

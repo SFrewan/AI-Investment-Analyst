@@ -1,0 +1,26 @@
+﻿===============================================================
+ NETWORK DIAGNOSIS - read only, no API request
+ at : 2026-08-31 18:41:58Z
+===============================================================
+
+--- configured DNS servers
+  Ethernet 3 -> 172.27.144.1
+
+--- name resolution
+  eodhd.com            OK  -> 134.209.140.199
+  www.microsoft.com    OK  -> 2.17.26.94
+  api.nuget.org        OK  -> 212.118.19.202, 91.106.99.240
+  cloudflare.com       OK  -> 104.16.132.229, 104.16.133.229
+
+--- direct reachability, bypassing this machine's resolver
+  1.1.1.1 answers ICMP - packets are leaving the machine
+  TCP 1.1.1.1:443 -> True
+
+--- eodhd.com through 1.1.1.1 directly
+  OK -> 134.209.140.199
+  The name is fine; this machine's own resolver is what failed.
+
+--- https HEAD to eodhd.com (no token, no query string)
+  OK, status 200
+
+  finished: 2026-08-31 18:42:04Z

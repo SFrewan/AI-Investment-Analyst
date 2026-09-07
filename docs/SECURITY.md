@@ -53,6 +53,131 @@ committed.
 
 ---
 
+## 2a. The EODHD API token
+
+The first real vendor credential this repository has had to hold. It authenticates both EODHD
+connectors — end-of-day prices and corporate actions — because they are one subscription.
+
+| | |
+|---|---|
+| Configuration path | `Providers:Eodhd:ApiKey` |
+| Environment variable | `Providers__Eodhd__ApiKey` |
+| Bound by | `EodhdOptions` (`SectionName` + the property name) |
+| Read by | `EodhdProvider`, `EodhdSplitsProvider`, through `IOptions<EodhdOptions>` |
+
+Both names are **derived in code** from `EodhdOptions.SectionName`, and exposed as
+`EodhdOptions.ApiKeyPath` and `EodhdOptions.ApiKeyEnvironmentVariable`. Nothing — not a
+validation message, not a connector's refusal, not this document's instructions in the
+`appsettings` comment blocks — writes them out by hand any more. A name that appears in prose
+does not get renamed with the property, and an operator following a stale instruction sets a
+variable nothing reads, which presents as a missing credential rather than a misspelt one.
+
+### Setting it on Windows
+
+A **user** environment variable, not a machine one: it is then readable by this account and by
+nothing else on the box, and it needs no elevation.
+
+```powershell
+# Prompts, and never echoes. The value is not stored in your PowerShell history.
+.\scripts\set-eodhd-credential.ps1
+```
+
+Or by hand, if you prefer to see the mechanism:
+
+```powershell
+$token = Read-Host -AsSecureString "EODHD API token"
+$plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR(
+    [Runtime.InteropServices.Marshal]::SecureStringToBSTR($token))
+[Environment]::SetEnvironmentVariable('Providers__Eodhd__ApiKey', $plain, 'User')
+Remove-Variable plain
+```
+
+**Do not use `setx`** for this. It writes the value into the command line, which means the
+console history and, on some systems, the process-creation audit log. `SetEnvironmentVariable`
+does not.
+
+**A variable set this way is not visible to the shell that set it.** Close the terminal — and
+any editor or IDE started before it was set — and open a new one. Every "the token is set but
+the application cannot see it" report is this.
+
+### Checking it reached the application
+
+```powershell
+.\scripts\check-eodhd-credential.cmd
+```
+
+Boots the same composition the backfill runs under and reports four things: whether a
+credential arrived, its length, a domain-separated fingerprint, and **which configuration
+provider supplied it**. It makes no provider calls and never prints the value. The report is
+written to `artifacts/verify/credential.md`, which is git-ignored, and contains no credential.
+
+The fingerprint is the part worth understanding. It is the first twelve hex characters of a
+SHA-256 over a constant domain string and the credential. Two machines can compare fingerprints
+to learn whether they hold the same token without either disclosing it, and the domain string
+means a fingerprint published here cannot be checked against a digest computed anywhere else.
+
+### Stored vs. inherited — the failure that looks like a missing variable
+
+A Windows user environment variable lives in the per-user registry. **A process never reads it
+from there.** It receives a copy of its parent's environment block when it starts, and that copy
+is a snapshot of whatever the parent held. Explorer refreshes its own block when it processes
+the broadcast that follows a change — *when* it processes it. Everything it launches afterwards
+inherits the refreshed block; if it did not refresh, everything it launches inherits the stale
+one, indefinitely.
+
+That produces two true statements that contradict each other on screen:
+
+```powershell
+# Reads the registry. Says the variable is set.
+[Environment]::GetEnvironmentVariable('Providers__Eodhd__ApiKey', 'User')
+
+# Reads this process's inherited block. Says it is not.
+$env:Providers__Eodhd__ApiKey
+```
+
+`WindowsUserEnvironment` closes it by reading the stored value directly, as a configuration
+source registered **below** `AddEnvironmentVariables` — so a value in the process block still
+wins, and setting a variable for one run overrides the stored one exactly as it always did. It
+supplies an allow-list of one path, the credential; mirroring the whole user environment would
+let any variable named after a settings path bind on a machine whose owner never asked for that.
+
+Signing out and back in still fixes the underlying staleness, and is worth doing. Nothing
+depends on it any more.
+
+`check-eodhd-credential.cmd` reports **stored** and **inherited** as separate rows, and when
+neither has a value it lists the per-user variable *names* beginning with `Providers` — names
+only, never values — because a variable set under a nearly-right name is otherwise
+indistinguishable from no variable at all.
+
+### Precedence, and the one place it was wrong
+
+Later configuration sources override earlier ones. The host's order is `appsettings.json`, then
+`appsettings.{Environment}.json`, then user-secrets, then environment variables — so an
+environment variable beats a user-secret, which is what makes it the deployment mechanism.
+
+`BackfillApiFactory`, the fixture the billable backfill and the acquisition dry run both boot,
+appended `AddUserSecrets` after the host's own sources, which reversed that for exactly this
+setting. A stale token in a developer's secrets store would have silently outranked the
+environment variable an operator had just set, spent the subscription against the wrong account,
+and reported a 401 naming neither. It now re-adds the environment afterwards, and
+`EodhdCredentialSourcingTests` pins the rule.
+
+### What is asserted, and what never is
+
+`EodhdCredentialSourcingTests` and `CredentialHygieneTests` prove the credential resolves, is
+refused when blank or whitespace-padded, and appears in no tracked configuration file. **No test
+compares a credential to an expected value and none writes one to test output.** Everything goes
+through `CredentialPresence`, which reports presence, length and fingerprint. The values in the
+test suite are synthetic, so the rule costs nothing there; it is kept because
+`check-eodhd-credential` points the same code at a real installation.
+
+### If the token is disclosed
+
+Rotate it at EODHD first — see section 4. A monthly subscription's token is a billing
+credential as well as a data one.
+
+---
+
 ## 3. Repository settings to enable on GitHub
 
 These are settings, not code, and must be enabled in the GitHub UI. Recorded here because a

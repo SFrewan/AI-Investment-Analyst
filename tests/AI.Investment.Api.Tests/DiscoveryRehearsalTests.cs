@@ -4,7 +4,12 @@ using System.Text;
 using AI.Investment.Application.Abstractions;
 using AI.Investment.Application.Opportunities;
 using AI.Investment.Domain.Ingestion;
+using AI.Investment.Domain.Opportunities;
+using AI.Investment.Domain.Opportunities.Admission;
 using AI.Investment.Domain.Opportunities.Equity;
+using AI.Investment.Domain.Validation;
+using AI.Investment.Domain.ValueObjects;
+using AI.Investment.Infrastructure.Admission;
 using AI.Investment.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -60,6 +65,12 @@ public sealed class DiscoveryRehearsalTests : IClassFixture<BackfillApiFactory>
 
     private const int RequiredPerCalibrationBin = 10;
 
+    private const string NotMeasured = "not measured";
+
+    private const string Admitted = "yes";
+
+    private const string Refused = "NO";
+
     /// <summary>
     /// The event threshold is read from the settings now rather than restated here, so the
     /// rehearsal cannot disagree with the rule about what event it is counting.
@@ -105,7 +116,7 @@ public sealed class DiscoveryRehearsalTests : IClassFixture<BackfillApiFactory>
             _output.WriteLine(Inv($"{instrument}: done at {watch.Elapsed.TotalSeconds:F0}s"));
         }
 
-        var report = Compose(results, settings, clock.UtcNow, watch.Elapsed);
+        var report = Compose(services, results, settings, clock.UtcNow, watch.Elapsed);
 
         await WriteAsync(report);
         _output.WriteLine(report);
@@ -313,6 +324,7 @@ public sealed class DiscoveryRehearsalTests : IClassFixture<BackfillApiFactory>
     // ---- the report ---------------------------------------------------------
 
     private static string Compose(
+        IServiceProvider services,
         List<InstrumentResult> results,
         DiscoverySettings settings,
         DateTime nowUtc,
@@ -417,6 +429,17 @@ public sealed class DiscoveryRehearsalTests : IClassFixture<BackfillApiFactory>
             Line(report, Inv($"| Mean stated probability | {firings.Average(f => f.Probability):F4} | {episodeFirings.Average(f => f.Probability):F4} |"));
             Line(report, Inv($"| Mean realised return | {firings.Average(f => f.Realised):P2} | {episodeFirings.Average(f => f.Realised):P2} |"));
         }
+
+        Line(report, string.Empty);
+        Line(report, "## The admission gate");
+        Line(report, string.Empty);
+        Line(report, "The gate is asked the question it exists for, against the population the");
+        Line(report, "platform would actually raise. Nothing here is tuned: the threshold and horizon");
+        Line(report, "come from the same settings the screen used, and the score is the one measured");
+        Line(report, "above.");
+        Line(report, string.Empty);
+
+        AppendAdmission(report, services, episodeFirings, settings, nowUtc);
 
         Line(report, string.Empty);
         Line(report, "## Calibration spread");
@@ -584,6 +607,126 @@ public sealed class DiscoveryRehearsalTests : IClassFixture<BackfillApiFactory>
 
     private static string Verdict(bool met) => met ? "**met**" : "**NOT met**";
 
+    /// <summary>
+    /// Runs the real admission gate over the real measurement and reports the verdict.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The declaration is built from the settings the screen was actually configured with, so the
+    /// event the gate checks is the event the rule counted - the mismatch that produced a Brier score
+    /// of 0.5538 cannot be reintroduced here by restating the threshold.
+    /// </para>
+    /// <para>
+    /// The tuning basis is declared as untuned because the shipped parameters were chosen before this
+    /// evidence base existed and have not been changed since. That is a claim about history rather
+    /// than something the arithmetic can check, which is exactly why the gate makes it explicit.
+    /// </para>
+    /// </remarks>
+    private static void AppendAdmission(
+        StringBuilder report,
+        IServiceProvider services,
+        List<Firing> episodeFirings,
+        DiscoverySettings settings,
+        DateTime nowUtc)
+    {
+        var criteria = services.GetRequiredService<AdmissionCriteria>();
+
+        // The declaration is read from the committed register, not built here. Before this, the
+        // rehearsal dated its own declaration to the earliest prediction it was about to score,
+        // which made the look-ahead check unfailable. See StrategyRegister.
+        var registered = StrategyRegister.Require(
+            StrategyRegister.Parse(File.ReadAllText(RegisterPath())),
+            "equity-price-recovery");
+
+        var declared = registered.Event;
+        var type = declared.Type;
+        var threshold = Percentage.FromRatio(settings.Rule.EventThresholdRatio);
+
+        StrategyMeasurement? measurement = null;
+        SampleRequirement? requirement = null;
+        decimal rho = 0m;
+        var clusters = 0;
+
+        if (episodeFirings.Count > 0)
+        {
+            var scored = episodeFirings.Select(f => (f.Probability, f.Succeeded)).ToList();
+            var curve = CalibrationCurve.From(scored);
+            var occurred = episodeFirings.Count(f => f.Succeeded);
+
+            // Clustered by the calendar month the episode opened in. Twenty large caps fall
+            // together, and the rehearsal's own monthly table shows the firings arriving in a
+            // handful of bursts, so the month is the unit a market event actually spans.
+            var byMonth = episodeFirings
+                .GroupBy(f => (f.DecidedAtUtc.Year, f.DecidedAtUtc.Month))
+                .Select(g => (Size: g.Count(), Successes: g.Count(f => f.Succeeded)))
+                .ToList();
+
+            clusters = byMonth.Count;
+            rho = ScoreStatistics.IntraClusterCorrelation(byMonth);
+
+            measurement = StrategyMeasurement.Create(
+                type,
+                episodeFirings.Count,
+                curve.BrierScore,
+                threshold,
+                episodeFirings.Min(f => f.DecidedAtUtc),
+                nowUtc,
+                declared.EvidenceBaseFingerprint,
+                registered.TrialsInFamily,
+                registered.FamiliesOnThisEvidenceBase,
+                baseRate: (decimal)occurred / episodeFirings.Count,
+                componentStandardDeviation: ScoreStatistics.ComponentSpread(scored),
+                independentClusters: clusters,
+                intraClusterCorrelation: rho);
+
+            requirement = SampleRequirement.For(declared, measurement, criteria);
+        }
+
+        var admission = StrategyAdmission.Evaluate(declared, measurement, criteria, nowUtc);
+
+        Line(report, "| | |");
+        Line(report, "| --- | ---: |");
+        Line(report, Inv($"| Strategy | `{type}` |"));
+        Line(report, Inv($"| Declaration | `{declared.Fingerprint[..16]}` from the register, {declared.Basis}, dated {declared.DeclaredAtUtc:yyyy-MM-dd} |"));
+        Line(report, Inv($"| Evidence base | `{declared.EvidenceBaseFingerprint}` |"));
+        Line(report, Inv($"| Declared event | return at or above {threshold.Ratio:P2} within {settings.Rule.HorizonSessions} sessions |"));
+        Line(report, Inv($"| Declared claim | Brier at or under {declared.ClaimedBrier:F2} |"));
+        Line(report, Inv($"| Sample required | {Bar(requirement, criteria)} |"));
+        Line(report, Inv($"| Search family | `{declared.SearchFamily}`, trial {registered.TrialsInFamily} of {criteria.MaximumTrialsPerSearchFamily} |"));
+        Line(report, Inv($"| Resolved predictions | {measurement?.ResolvedPredictions ?? 0} |"));
+        Line(report, Inv($"| Effective after clustering | {measurement?.EffectiveResolvedPredictions ?? 0} from {clusters} months at rho {rho:F4} |"));
+        Line(report, Inv($"| Base-rate reference | {Reference(measurement)} |"));
+        var brier = measurement is null || !measurement.BrierScore.IsMeasured
+            ? NotMeasured
+            : Inv($"{measurement.BrierScore.Value!.Value:F4} (n={measurement.BrierScore.SampleSize})");
+
+        Line(report, Inv($"| Brier score | {brier} against a ceiling of {criteria.MaximumBrierScore:F2} |"));
+        var verdict = admission.IsAdmitted ? Admitted : Refused;
+
+        Line(report, Inv($"| **Admitted to the ranked pool** | **{verdict}** |"));
+        Line(report, string.Empty);
+
+        if (admission.IsAdmitted)
+        {
+            Line(report, "The strategy clears the bar and its opportunities may compete for an action.");
+
+            return;
+        }
+
+        Line(report, "Refused, for these reasons:");
+        Line(report, string.Empty);
+
+        foreach (var (refusal, reason) in admission.Refusals.Zip(admission.Reasons))
+        {
+            Line(report, Inv($"- `{refusal}` — {reason}"));
+        }
+
+        Line(report, string.Empty);
+        Line(report, "That is the gate doing its job rather than a defect. The strategy keeps running,");
+        Line(report, "keeps drafting and keeps accumulating the resolved predictions that would admit");
+        Line(report, "it; it simply does not compete for the one action a cycle may take.");
+    }
+
     private static decimal Brier(List<Firing> firings, Func<Firing, bool> occurred) =>
         firings.Sum(f =>
         {
@@ -604,6 +747,22 @@ public sealed class DiscoveryRehearsalTests : IClassFixture<BackfillApiFactory>
     private static void Line(StringBuilder report, string text) => report.AppendLine(text);
 
     private static string Inv(FormattableString text) => FormattableString.Invariant(text);
+
+    private static string Bar(SampleRequirement? requirement, AdmissionCriteria criteria) =>
+        requirement is null
+            ? Inv($"{criteria.MinimumResolvedPredictions} (floor)")
+            : requirement.IsUnattainable
+                ? "unattainable"
+                : Inv($"{requirement.Required} (floor {requirement.Floor}, derived {requirement.Derived})");
+
+    private static string Reference(StrategyMeasurement? measurement) =>
+        measurement?.ReferenceBrier is { } reference ? Inv($"{reference:F4}") : NotMeasured;
+
+    /// <summary>The committed declaration register, beside the solution rather than in the build.</summary>
+    private static string RegisterPath() =>
+        Path.GetFullPath(Path.Combine(
+            AppContext.BaseDirectory, "..", "..", "..", "..", "..",
+            StrategyRegister.RelativePath));
 
     private static async Task WriteAsync(string report)
     {

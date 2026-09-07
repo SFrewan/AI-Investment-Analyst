@@ -72,9 +72,10 @@ public sealed class EodhdSplitsProvider : IDataProvider
         if (string.IsNullOrWhiteSpace(_options.ApiKey))
         {
             throw new InvalidOperationException(
-                "No EODHD API key is configured. Set 'Providers:Eodhd:ApiKey' in the user-secrets " +
-                "store or the environment variable Providers__Eodhd__ApiKey. The splits connector " +
-                "shares the price connector's credential because it is the same subscription.");
+                "No EODHD API key is configured. Set '" + EodhdOptions.ApiKeyPath + "' in the " +
+                "user-secrets store or the environment variable " +
+                EodhdOptions.ApiKeyEnvironmentVariable + ". The splits connector shares the price " +
+                "connector's credential because it is the same subscription.");
         }
 
         var symbol = EodhdProvider.SafeSymbol(request.Subject);
@@ -102,9 +103,21 @@ public sealed class EodhdSplitsProvider : IDataProvider
         }
         catch (HttpRequestException exception)
         {
-            throw new HttpRequestException(
+            // The price connector's wrapping, used here for the same reason it was introduced
+            // there: discarding `exception` throws away the socket error underneath, and by the
+            // time the ledger sees it the only surviving fact is that something HTTP-shaped went
+            // wrong. That is exactly how GPC.US and MYO.US reached the ledger as a bare
+            // "HttpRequestException during ingestion." with no chain and no classification, while
+            // three price failures on the same host were recorded as socket:HostNotFound.
+            //
+            // The message is unchanged, redaction included. What is added is the inner exception
+            // and the closed-set token naming the failure's shape - neither of which can carry a
+            // URL, a key or a response body.
+            throw new ProviderTransportException(
                 $"The EODHD splits request for '{symbol}' failed before a response was received: " +
-                EodhdProvider.Redact(exception.Message, _options.ApiKey));
+                EodhdProvider.Redact(exception.Message, _options.ApiKey),
+                exception,
+                ProviderTransportException.Classify(exception));
         }
 
         using (response)

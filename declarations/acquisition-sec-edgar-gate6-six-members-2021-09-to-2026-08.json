@@ -1,0 +1,396 @@
+{
+  "Schema": "acquisition-authorization@1",
+  "Status": "INSTALLED - LOADABLE. NO ACQUISITION IS AUTHORISED.",
+  "StatusNote": "Installed means one thing only: this file sits in declarations/ under the acquisition-*.json convention the other authorisations use, and AcquisitionAuthorization.Load accepts it against the sealed evidence base. It does NOT mean any batch is authorised, that the SEC connector is enabled, or that a request may leave. There is no SEC partition, no batch carries Authorised: true, Providers:SecEdgar:Enabled is false in both tracked appsettings, and no code path dispatches on account of this file existing. Dispatching still requires defining a partition, marking a batch authorised, and enabling the connector with a deployment identity - three further deliberate acts, none of which this installation performs.",
+  "AuthorizationId": "sec-edgar-gate6-six-members-2021-09-to-2026-08",
+  "EvidenceBaseFingerprint": "us-pit-sample400-2021-09-to-2026-08@f78cfe45b962",
+  "Note": "A ceiling, not a licence. Six requests, six companies, one document each. This authorisation consumes nothing from any EODHD authorisation, supersedes nothing and is superseded by nothing: it is an original for a different vendor, a different source and a different question.",
+  "Purpose": "Establish whether a primary SEC filing exists near any of the 23 unexplained price-breach dates that could evidence an announcement capable of explaining a persistent price-level transition. It answers that question or fails to; it does not adjust, repair, reclassify or release anything.",
+  "Vendor": "sec",
+  "Sources": [
+    "sec-edgar"
+  ],
+  "Endpoints": {
+    "sec-edgar": "submissions/CIK{cik}.json"
+  },
+  "Categories": {
+    "sec-edgar": "RegulatoryFilings"
+  },
+  "EndpointNote": "Taken from SecEdgarEndpoints.ForCategory, which already maps RegulatoryFilings to the submissions document. No new endpoint, no new category and no connector change is required by this proposal.",
+  "WindowFromUtc": "2021-09-01",
+  "WindowToUtc": "2026-08-31",
+  "WindowNote": "The sealed universe window, restated so this authorisation is scoped to the same evidence base. It is NOT a request parameter: SecEdgarProvider declares supportsWindow=false because the submissions endpoint returns a company's whole filing history in one document and takes no period argument. Filing selection by date happens after retrieval, against the archived payload, under FilingSelection below.",
+  "SubjectKind": "Company",
+  "SubjectIdentifier": "Cik",
+  "Region": "UnitedStates",
+  "PlannedRequests": 6,
+  "AlreadySatisfied": 0,
+  "DispatchCeiling": 6,
+  "RequestModel": {
+    "Derivation": "Read from SecEdgarProvider.FetchAsync and SecEdgarEndpoints, not estimated and not discovered by dispatching anything.",
+    "RequestsPerSubjectPerCategory": 1,
+    "Pagination": "None. The connector returns no continuation token and the provider comment states these endpoints return one complete document; inventing paging it does not offer would be building a request shape EDGAR never described.",
+    "SubmissionsMetadataRequests": 6,
+    "FilingIndexRequests": 0,
+    "FilingDocumentRequests": 0,
+    "MaximumRequests": 6,
+    "MinimumRequests": 6,
+    "ExpectedRequests": 6,
+    "PerMemberRequests": 1,
+    "ExpectedArtifacts": 6,
+    "KnownLimitation": "EDGAR paginates a long filing history: the submissions document carries the most recent filings inline and older ones in additional files it references. This connector does not follow those references, so a member whose history exceeds one document would be covered only in part. All six are short-lived issuers whose histories are expected to fit, but that expectation is stated here to be checked at review rather than assumed."
+  },
+  "FairAccess": {
+    "PublishedCeilingRequestsPerSecond": 10,
+    "Source": "SecEdgarOptions.FairAccessRequestsPerSecond, which the options object clamps MaxRequestsPerSecond to and the provider declares as ProviderQuota.PerSecond. Not invented here.",
+    "UserAgentRequired": true,
+    "UserAgentForm": "{ApplicationName} {ContactEmail}, from SecEdgarOptions.UserAgent; the connector is not registered at all unless a contact address is configured.",
+    "TotalRequests": 6,
+    "BudgetStatement": "Six requests is under one second of the SEC's published allowance. The gateway rate limiter holds the declared quota, so the whole acquisition is a rounding error against fair access rather than something to schedule around."
+  },
+  "FilingSelection": {
+    "Applies": "After retrieval, to the archived submissions document. Nothing here narrows a request, because the endpoint takes no date parameter.",
+    "WindowBeforeDays": 5,
+    "WindowAfterDays": 8,
+    "Justification": "Before: a filing accepted after the close moves the next session, and a Friday filing moves Monday, so two trading sessions of lookback needs five calendar days to clear a weekend. After: Item-triggered 8-K reports are due within four business days of the triggering event, which is up to six calendar days, and a weekend inside that window takes it to eight. The window is therefore the reporting deadline plus the settlement of a weekend, not a round number.",
+    "Forms": [
+      "8-K",
+      "8-K/A",
+      "25",
+      "25-NSE",
+      "15-12B",
+      "15-12G",
+      "10-K",
+      "10-Q",
+      "S-4",
+      "DEFM14A",
+      "DEFA14A",
+      "SC 13D",
+      "SC 13D/A",
+      "SC 13E3",
+      "SC 14D9",
+      "SC TO-T",
+      "SC TO-I"
+    ],
+    "FormsNote": "A selection list applied to one already-archived document, not a list of things to fetch. Every form here is one that can carry an announcement or an effective date capable of producing a persistent level transition; forms that cannot are excluded rather than swept in. One member carries an additional reading tier: see PerMemberFormScope. It is a reading rule over the same already-retrieved document and changes no request, no symbol and no digest-covered field.",
+    "Breaches": [
+      {
+        "Symbol": "LGIQ.US",
+        "Cik": "0001335112",
+        "BreachFrom": "2022-12-29",
+        "BreachTo": "2022-12-30",
+        "Move": "77.44%",
+        "Classification": "B - immediate or repeated reversal",
+        "SelectFilingsFromUtc": "2022-12-24",
+        "SelectFilingsToUtc": "2023-01-07"
+      },
+      {
+        "Symbol": "LGIQ.US",
+        "Cik": "0001335112",
+        "BreachFrom": "2023-11-16",
+        "BreachTo": "2023-11-17",
+        "Move": "53.06%",
+        "Classification": "A - persistent level shift, corporate-action cause unconfirmed",
+        "SelectFilingsFromUtc": "2023-11-11",
+        "SelectFilingsToUtc": "2023-11-25"
+      },
+      {
+        "Symbol": "LGIQ.US",
+        "Cik": "0001335112",
+        "BreachFrom": "2023-12-22",
+        "BreachTo": "2023-12-26",
+        "Move": "124.00%",
+        "Classification": "A - persistent level shift, corporate-action cause unconfirmed",
+        "SelectFilingsFromUtc": "2023-12-17",
+        "SelectFilingsToUtc": "2024-01-03"
+      },
+      {
+        "Symbol": "NGM.US",
+        "Cik": "0001426332",
+        "BreachFrom": "2022-10-14",
+        "BreachTo": "2022-10-17",
+        "Move": "70.48%",
+        "Classification": "A - persistent level shift, corporate-action cause unconfirmed",
+        "SelectFilingsFromUtc": "2022-10-09",
+        "SelectFilingsToUtc": "2022-10-25"
+      },
+      {
+        "Symbol": "ONEM.US",
+        "Cik": "0001404123",
+        "BreachFrom": "2022-07-20",
+        "BreachTo": "2022-07-21",
+        "Move": "69.45%",
+        "Classification": "A - persistent level shift, corporate-action cause unconfirmed",
+        "SelectFilingsFromUtc": "2022-07-15",
+        "SelectFilingsToUtc": "2022-07-29"
+      },
+      {
+        "Symbol": "QUMU.US",
+        "Cik": "0000892482",
+        "BreachFrom": "2022-12-16",
+        "BreachTo": "2022-12-19",
+        "Move": "100%",
+        "Classification": "A - persistent level shift, corporate-action cause unconfirmed",
+        "SelectFilingsFromUtc": "2022-12-11",
+        "SelectFilingsToUtc": "2022-12-27"
+      },
+      {
+        "Symbol": "SDC.US",
+        "Cik": "0001775625",
+        "BreachFrom": "2023-09-29",
+        "BreachTo": "2023-10-02",
+        "Move": "61.18%",
+        "Classification": "A - persistent level shift, corporate-action cause unconfirmed",
+        "SelectFilingsFromUtc": "2023-09-24",
+        "SelectFilingsToUtc": "2023-10-10"
+      },
+      {
+        "Symbol": "SDC.US",
+        "Cik": "0001775625",
+        "BreachFrom": "2023-10-02",
+        "BreachTo": "2023-10-03",
+        "Move": "53.45%",
+        "Classification": "A - persistent level shift, corporate-action cause unconfirmed",
+        "SelectFilingsFromUtc": "2023-09-27",
+        "SelectFilingsToUtc": "2023-10-11"
+      },
+      {
+        "Symbol": "SHPW.US",
+        "Cik": "0001784851",
+        "BreachFrom": "2021-10-01",
+        "BreachTo": "2021-10-04",
+        "Move": "6308.45%",
+        "Classification": "A - persistent level shift, corporate-action cause unconfirmed",
+        "SelectFilingsFromUtc": "2021-09-26",
+        "SelectFilingsToUtc": "2021-10-12"
+      },
+      {
+        "Symbol": "SHPW.US",
+        "Cik": "0001784851",
+        "BreachFrom": "2021-10-19",
+        "BreachTo": "2021-10-20",
+        "Move": "51.47%",
+        "Classification": "B - immediate or repeated reversal",
+        "SelectFilingsFromUtc": "2021-10-14",
+        "SelectFilingsToUtc": "2021-10-28"
+      },
+      {
+        "Symbol": "SHPW.US",
+        "Cik": "0001784851",
+        "BreachFrom": "2024-07-02",
+        "BreachTo": "2024-07-03",
+        "Move": "62.05%",
+        "Classification": "E - insufficient local evidence",
+        "SelectFilingsFromUtc": "2024-06-27",
+        "SelectFilingsToUtc": "2024-07-11"
+      },
+      {
+        "Symbol": "SHPW.US",
+        "Cik": "0001784851",
+        "BreachFrom": "2024-07-05",
+        "BreachTo": "2024-07-08",
+        "Move": "132.19%",
+        "Classification": "A - persistent level shift, corporate-action cause unconfirmed",
+        "SelectFilingsFromUtc": "2024-06-30",
+        "SelectFilingsToUtc": "2024-07-16"
+      },
+      {
+        "Symbol": "SHPW.US",
+        "Cik": "0001784851",
+        "BreachFrom": "2024-07-18",
+        "BreachTo": "2024-07-19",
+        "Move": "67.99%",
+        "Classification": "A - persistent level shift, corporate-action cause unconfirmed",
+        "SelectFilingsFromUtc": "2024-07-13",
+        "SelectFilingsToUtc": "2024-07-27"
+      },
+      {
+        "Symbol": "SHPW.US",
+        "Cik": "0001784851",
+        "BreachFrom": "2024-07-19",
+        "BreachTo": "2024-07-22",
+        "Move": "55.75%",
+        "Classification": "B - immediate or repeated reversal",
+        "SelectFilingsFromUtc": "2024-07-14",
+        "SelectFilingsToUtc": "2024-07-30"
+      },
+      {
+        "Symbol": "SHPW.US",
+        "Cik": "0001784851",
+        "BreachFrom": "2024-07-25",
+        "BreachTo": "2024-07-26",
+        "Move": "57.98%",
+        "Classification": "A - persistent level shift, corporate-action cause unconfirmed",
+        "SelectFilingsFromUtc": "2024-07-20",
+        "SelectFilingsToUtc": "2024-08-03"
+      },
+      {
+        "Symbol": "SHPW.US",
+        "Cik": "0001784851",
+        "BreachFrom": "2024-08-01",
+        "BreachTo": "2024-08-02",
+        "Move": "99.33%",
+        "Classification": "A - persistent level shift, corporate-action cause unconfirmed",
+        "SelectFilingsFromUtc": "2024-07-27",
+        "SelectFilingsToUtc": "2024-08-10"
+      },
+      {
+        "Symbol": "SHPW.US",
+        "Cik": "0001784851",
+        "BreachFrom": "2024-08-05",
+        "BreachTo": "2024-08-06",
+        "Move": "100%",
+        "Classification": "B - immediate or repeated reversal",
+        "SelectFilingsFromUtc": "2024-07-31",
+        "SelectFilingsToUtc": "2024-08-14"
+      },
+      {
+        "Symbol": "SHPW.US",
+        "Cik": "0001784851",
+        "BreachFrom": "2024-10-07",
+        "BreachTo": "2024-10-08",
+        "Move": "900%",
+        "Classification": "E - insufficient local evidence",
+        "SelectFilingsFromUtc": "2024-10-02",
+        "SelectFilingsToUtc": "2024-10-16"
+      },
+      {
+        "Symbol": "SHPW.US",
+        "Cik": "0001784851",
+        "BreachFrom": "2024-10-14",
+        "BreachTo": "2024-10-15",
+        "Move": "80.0%",
+        "Classification": "A - persistent level shift, corporate-action cause unconfirmed",
+        "SelectFilingsFromUtc": "2024-10-09",
+        "SelectFilingsToUtc": "2024-10-23"
+      },
+      {
+        "Symbol": "SHPW.US",
+        "Cik": "0001784851",
+        "BreachFrom": "2024-10-17",
+        "BreachTo": "2024-10-18",
+        "Move": "100%",
+        "Classification": "B - immediate or repeated reversal",
+        "SelectFilingsFromUtc": "2024-10-12",
+        "SelectFilingsToUtc": "2024-10-26"
+      },
+      {
+        "Symbol": "SHPW.US",
+        "Cik": "0001784851",
+        "BreachFrom": "2024-10-22",
+        "BreachTo": "2024-10-23",
+        "Move": "100%",
+        "Classification": "C - transient isolated print",
+        "SelectFilingsFromUtc": "2024-10-17",
+        "SelectFilingsToUtc": "2024-10-31"
+      },
+      {
+        "Symbol": "SHPW.US",
+        "Cik": "0001784851",
+        "BreachFrom": "2024-10-29",
+        "BreachTo": "2024-10-30",
+        "Move": "100%",
+        "Classification": "A - persistent level shift, corporate-action cause unconfirmed",
+        "SelectFilingsFromUtc": "2024-10-24",
+        "SelectFilingsToUtc": "2024-11-07"
+      },
+      {
+        "Symbol": "SHPW.US",
+        "Cik": "0001784851",
+        "BreachFrom": "2025-04-22",
+        "BreachTo": "2025-04-23",
+        "Move": "100%",
+        "Classification": "A - persistent level shift, corporate-action cause unconfirmed",
+        "SelectFilingsFromUtc": "2025-04-17",
+        "SelectFilingsToUtc": "2025-05-01"
+      }
+    ],
+    "PerMemberFormScope": {
+      "Note": "Additional forms one named member may be read for, beyond the shared list above. Reading scope only. It cannot widen the member set, cannot add a request, and touches no digest-covered field.",
+      "0001335112": {
+        "Symbol": "LGIQ.US",
+        "AdditionalForms": [
+          "424B*",
+          "S-1",
+          "S-3"
+        ],
+        "Tier": "secondary - offering documents, reported as a distinct evidence tier and never folded in with the announcement forms",
+        "Rationale": "LGIQ.US is an OTC micro-cap and its three breaches (+77.44%, +53.06%, +124.00%) are the least likely of the six to be M&A-shaped. An overnight-priced offering is one of the few non-M&A events that reprices a micro-cap by tens of per cent and keeps it there, which is the signature under investigation. Excluding these forms for this member risked a null result that described the form list rather than the company.",
+        "AppliesToOtherMembers": false,
+        "ApprovedAt": "final pre-install review, artifacts/verify/sec-edgar-six-member-preinstall-review.md, item B2"
+      }
+    }
+  },
+  "Provenance": {
+    "ArchivedPerRequest": [
+      "Raw payload bytes, unmodified",
+      "Content hash of the payload (the archive is content addressed)",
+      "Media type as returned",
+      "SourceRecordId, which the connector sets to CIK{cik}",
+      "Retrieval instant",
+      "The ingestion run record, which carries the request, the outcome and the artefact hashes"
+    ],
+    "RecordedPerFiling": [
+      "accessionNumber",
+      "cik",
+      "form",
+      "filingDate",
+      "acceptanceDateTime",
+      "reportDate where present",
+      "effectiveDate where the form states one (Form 25, 25-NSE, 15-12B, 15-12G)",
+      "primaryDocument",
+      "items where present",
+      "the payload content hash the filing was read from",
+      "this AuthorizationId"
+    ],
+    "DomainMapping": {
+      "Provenance.SourceId": "sec-edgar",
+      "Provenance.AsOfUtc": "reportDate when EDGAR states one AND reportDate <= acceptanceDateTime; otherwise the acceptance instant. The instant the recorded fact is about, and never a date the document merely refers to.",
+      "Provenance.PublishedAtUtc": "acceptanceDateTime, always. The instant the market could have known, and the only legitimate backtest filter.",
+      "Provenance.RetrievedAtUtc": "when this platform fetched the document, always.",
+      "Provenance.SourceRecordId": "accessionNumber, which resolves to a document a human can open.",
+      "EffectiveDate": "NOT a Provenance instant. There is no Provenance field for it and none is added. It is carried as the VALUE of a separate event attribute, as ObservationValue.Timestamp.",
+      "Caveats": "form type, primary document name, and the 8-K item numbers."
+    },
+    "DomainInvariant": {
+      "Rule": "Claim.PublicationFollowsPeriod throws when PublishedAtUtc < AsOfUtc. Claim.RetrievalFollowsPublication throws when RetrievedAtUtc < PublishedAtUtc. Together: AsOfUtc <= PublishedAtUtc <= RetrievedAtUtc.",
+      "Source": "src/AI.Investment.Domain/Evidence/Claim.cs, the ClaimKind.Fact branch. Read, quoted and not changed by this proposal.",
+      "Consequence": "A date in the future relative to the filing cannot be AsOfUtc, because AsOfUtc must not exceed PublishedAtUtc. A Form 25 effective date follows its filing, so it can never be AsOfUtc."
+    },
+    "Form25Decision": {
+      "Statement": "Form 25 effective date is an event attribute and is not automatically used as AsOfUtc.",
+      "Why": "A Form 25 or 25-NSE states a delisting that becomes effective after the notice is filed. Mapping that future date to AsOfUtc would make AsOfUtc exceed PublishedAtUtc, which Claim.PublicationFollowsPeriod refuses. The domain is right and is not changed.",
+      "HowTheEventIsRecorded": "As a filing record whose fact is what the document states, not what the world will later become. The claim 'this Form 25 was filed and states an effective date of X' is true as of the filing, so AsOfUtc and PublishedAtUtc are both the acceptance instant and nothing is manufactured. X is the value of a separate attribute, typed as a timestamp. No date is lost and no invariant is bent.",
+      "Generalisation": "This is not a Form 25 special case dressed as a rule. Any filing whose stated date follows its acceptance instant takes the same path: AsOfUtc falls back to the acceptance instant and the stated date becomes an attribute value. Form 25, 25-NSE and the Form 15 family are the known instances; the guard is written for the class, not for the examples.",
+      "NotDone": "No new Provenance field. No new temporal meaning for AsOfUtc. No change to Claim, Provenance, Observation or any normaliser."
+    }
+  },
+  "PointInTime": {
+    "Preserved": {
+      "AnnouncementOrPublication": "acceptanceDateTime -> Provenance.PublishedAtUtc. When the market could have known.",
+      "EffectiveOrEventDate": "reportDate for a past event; the stated effective date for a future one. Carried as AsOfUtc only when it precedes or equals publication, and otherwise as an attribute value.",
+      "Retrieval": "the fetch instant -> Provenance.RetrievedAtUtc. When this platform learned it, which is not knowledge the market had."
+    },
+    "Distinction": "announcement/publication time != effective/event date != retrieval time. The three are never collapsed, never substituted for one another, and never derived from one another.",
+    "Rule": "A stage that needs to know what was knowable on a date reads PublishedAtUtc and nothing else. A stage that needs to know when a delisting took effect reads the effective-date attribute and not any Provenance instant."
+  },
+  "Boundedness": {
+    "MembersNamed": 6,
+    "CannotExpandTo355": "The Symbols list is the whole authorisation. AcquisitionAuthorization.Covers refuses any subject not in it before any counting happens, and Load refuses the file outright unless PlannedRequests equals distinct symbols times distinct sources. Six symbols and one source can only be six.",
+    "ConsumesNoExistingAuthorization": "This is a new original under a different vendor. It carries no SupersedesAuthorizationId and no AlreadyConsumed, which the @1 loader requires absent, and it touches no EODHD counter."
+  },
+  "Symbols": [
+    "0000892482",
+    "0001335112",
+    "0001404123",
+    "0001426332",
+    "0001775625",
+    "0001784851"
+  ],
+  "SymbolsNote": "Ten-digit CIKs, taken verbatim from artifacts/universe/identity-sample400.json and present in declarations/universe-sample400-2021-2026.json. None was invented, substituted or reformatted by hand. EDGAR identifies companies by CIK and refuses tickers, so the CIK is the subject identifier here in the same way an EODHD symbol is one there.",
+  "AuthorizationDigest": "499f211f9c931c78d7faf1beb76eef3205fec12cb28db06eeeda461964567682",
+  "DigestNote": "Computed with the repository's own canonical form: schema, evidence base, vendor, sources, window, planned, satisfied, ceiling, then each symbol. The @1 form carries no supersession tail. Verify with AcquisitionAuthorization.DigestFor before installing.",
+  "InstalledAs": "acquisition-sec-edgar-gate6-six-members-2021-09-to-2026-08.json",
+  "InstalledFrom": "declarations/sec-edgar-gate6-six-members-2021-2026.draft.json",
+  "InstallReview": "artifacts/verify/sec-edgar-six-member-preinstall-review.md"
+}

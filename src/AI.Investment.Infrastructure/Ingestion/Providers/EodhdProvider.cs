@@ -81,12 +81,15 @@ public sealed class EodhdProvider : IDataProvider
 
         if (string.IsNullOrWhiteSpace(_options.ApiKey))
         {
-            // Fail closed, and say which knob is empty without printing anything from it.
+            // Fail closed, and say which knob is empty without printing anything from it. Both
+            // names come from the options class so that renaming the setting renames the
+            // instruction with it.
             throw new InvalidOperationException(
-                "No EODHD API key is configured. Set 'Providers:Eodhd:ApiKey' in the user-secrets " +
-                "store or the environment variable Providers__Eodhd__ApiKey. The connector does " +
-                "not fall back to an unauthenticated request, because EODHD answers one with a " +
-                "page that is not price data.");
+                "No EODHD API key is configured. Set '" + EodhdOptions.ApiKeyPath + "' in the " +
+                "user-secrets store or the environment variable " +
+                EodhdOptions.ApiKeyEnvironmentVariable + ". The connector does not fall back to " +
+                "an unauthenticated request, because EODHD answers one with a page that is not " +
+                "price data.");
         }
 
         var symbol = SafeSymbol(request.Subject);
@@ -114,10 +117,19 @@ public sealed class EodhdProvider : IDataProvider
         }
         catch (HttpRequestException exception)
         {
-            // The transport's own message can name the request. Ours cannot.
-            throw new HttpRequestException(
+            // The transport's own message can name the request. Ours cannot - but the exception's
+            // SHAPE can, and that is the part worth keeping.
+            //
+            // This used to discard `exception` entirely. Fifty-seven requests failed in one run and
+            // every one reached the ledger as "HttpRequestException during ingestion.", because the
+            // socket exception underneath had been thrown away here. Passing it as the inner costs
+            // one argument and restores the whole chain; the classification alongside names the
+            // one fact the chain still cannot carry.
+            throw new ProviderTransportException(
                 $"The EODHD request for '{symbol}' failed before a response was received: " +
-                Redact(exception.Message));
+                Redact(exception.Message),
+                exception,
+                ProviderTransportException.Classify(exception));
         }
 
         using (response)

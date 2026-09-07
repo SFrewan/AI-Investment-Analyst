@@ -1,3 +1,4 @@
+using System.Net;
 using AI.Investment.Application.Abstractions;
 using AI.Investment.Application.Ai;
 using AI.Investment.Application.Ai.Abstractions;
@@ -454,6 +455,25 @@ public static class DependencyInjection
         // Reads the splits document into security.split-ratio observations, which is what lets a
         // price series spanning a split be restated rather than refused.
         services.AddSingleton<INormalizer, EodhdSplitsNormalizer>();
+
+        // Reads EDGAR's XBRL companyfacts document into the financial figures the calculators
+        // already ask for. The connector could already fetch that endpoint and the scoring engine
+        // could already consume the result; this is the adapter that was missing between them.
+        services.AddSingleton<INormalizer, SecEdgarCompanyFactsNormalizer>();
+
+        // Archives a cross-sectional frame and emits nothing from it. Registered unconditionally
+        // like the others: whether the category is currently being requested has nothing to do
+        // with whether an already-archived payload can be re-read. See SecEdgarFramesNormalizer
+        // for why emitting nothing is the behaviour rather than a gap.
+        services.AddSingleton<INormalizer, SecEdgarFramesNormalizer>();
+
+        // Reads the filing history the submissions document also carries. Without it a
+        // RegulatoryFilings payload archived correctly and was then quarantined under
+        // normalization.no-normalizer@1, producing no observations at all - the bytes kept, the
+        // evidence lost until someone noticed. The company-profile normaliser above reads the same
+        // document and deliberately ignores the filings; this is the normaliser it was declining
+        // to be.
+        services.AddSingleton<INormalizer, SecEdgarFilingsNormalizer>();
     }
 
     private static void AddSecEdgar(IServiceCollection services, IConfiguration configuration)
@@ -479,9 +499,19 @@ public static class DependencyInjection
             {
                 client.BaseAddress = new Uri(baseAddress, UriKind.Absolute);
 
-                // A request that has not answered in half a minute is a request the scheduler
-                // should be told about, not one a thread should keep waiting on.
-                client.Timeout = TimeSpan.FromSeconds(30);
+                // companyfacts documents run to several megabytes each, so this is generous rather
+                // than tight. Half a minute was not enough for the largest of them.
+                client.Timeout = TimeSpan.FromSeconds(120);
+            })
+            .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler
+            {
+                // The SEC's fair-access page asks clients to accept compressed responses, and these
+                // documents are large enough that it plainly matters to them. Asking for compression
+                // WITHOUT enabling decompression is worse than not asking: the response arrives as
+                // gzip bytes, the handler passes them through untouched, and the normaliser is handed
+                // something that is not JSON. That failure is silent - the run records Succeeded and
+                // stores nothing.
+                AutomaticDecompression = DecompressionMethods.GZip | DecompressionMethods.Deflate,
             });
 
         services.AddTransient<IDataProvider>(provider => provider.GetRequiredService<SecEdgarProvider>());
@@ -558,6 +588,19 @@ public static class DependencyInjection
         services.AddSingleton<IValidationRequestFactory, ConfiguredValidationRequestFactory>();
         services.AddScoped<IValidationHistory, EfValidationHistory>();
         services.AddScoped<IPredictionCatalogue, EfPredictionCatalogue>();
+
+        // The admission bar lives beside validation because it is read from validation's output and
+        // means nothing without it. It is a lower and different bar than promotion: promotion asks
+        // whether the platform may act without a person, admission asks whether a strategy's numbers
+        // mean anything at all, and a strategy is normally admitted long before it is promotable.
+        services.AddOptions<AdmissionOptions>()
+            .Bind(configuration.GetSection(AdmissionOptions.SectionName))
+            .ValidateDataAnnotations();
+
+        // Turned into the domain type here for the same reason the discovery settings are: the
+        // domain takes a validated value object, not a bound configuration class.
+        services.AddSingleton(provider =>
+            provider.GetRequiredService<IOptions<AdmissionOptions>>().Value.ToCriteria());
     }
 
     private static void AddOperations(IServiceCollection services, IConfiguration configuration)

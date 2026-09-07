@@ -1,7 +1,9 @@
 using System.Globalization;
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using AI.Investment.Application.Abstractions;
+using AI.Investment.Application.Ingestion;
 using AI.Investment.Application.Normalization;
 using AI.Investment.Application.Opportunities;
 using AI.Investment.Domain.Common;
@@ -11,6 +13,7 @@ using AI.Investment.Domain.Opportunities.Equity;
 using AI.Investment.Domain.Sources;
 using AI.Investment.Infrastructure.Actions;
 using AI.Investment.Infrastructure.Configuration;
+using AI.Investment.Infrastructure.Ingestion;
 using AI.Investment.Infrastructure.Ingestion.Providers;
 using AI.Investment.Infrastructure.Normalization;
 using AI.Investment.Infrastructure.Persistence.Repositories;
@@ -82,14 +85,61 @@ public sealed class EodhdSplitsFeedTests : IAsyncLifetime
     [Fact]
     public async Task A_transport_failure_does_not_name_the_credential()
     {
-        var handler = new ThrowingHandler(
-            new HttpRequestException($"connect failed for https://eodhd.test/api/splits/AAPL.US?api_token={Key}"));
+        var inner = new HttpRequestException(
+            $"connect failed for https://eodhd.test/api/splits/AAPL.US?api_token={Key}");
 
-        var error = await Assert.ThrowsAsync<HttpRequestException>(
+        var handler = new ThrowingHandler(inner);
+
+        // ThrowsAny, not Throws: the connector raises a ProviderTransportException, which IS an
+        // HttpRequestException and carries a classification besides. Pinning the exact type would
+        // make "keep the inner exception" look like a breaking change, and keeping it is the point.
+        var error = await Assert.ThrowsAnyAsync<HttpRequestException>(
             () => Provider(handler).FetchAsync(Request("AAPL.US")));
 
         Assert.DoesNotContain(Key, error.Message, StringComparison.Ordinal);
         Assert.Contains(EodhdProvider.Redaction, error.Message, StringComparison.Ordinal);
+
+        // The wrapping, the chain and the classification - the three facts that were missing.
+        Assert.IsType<ProviderTransportException>(error);
+        Assert.Same(inner, error.InnerException);
+
+        var diagnostic = Assert.IsAssignableFrom<ITransportDiagnostic>(error).TransportDiagnostic;
+
+        Assert.False(string.IsNullOrWhiteSpace(diagnostic));
+        Assert.DoesNotContain(Key, diagnostic, StringComparison.Ordinal);
+        Assert.DoesNotContain("api_token", diagnostic, StringComparison.OrdinalIgnoreCase);
+
+        // And it was attempted once. A connector that retried would spend authorisation the
+        // runner never charged for, which is a worse bug than the one being fixed.
+        Assert.Equal(1, handler.Calls);
+    }
+
+    /// <summary>The classification is the existing one, not a second taxonomy.</summary>
+    /// <remarks>
+    /// A host that does not resolve is the failure this investigation actually found on the wire,
+    /// and it must arrive at the ledger under the same token the price connector produces for it.
+    /// The expected value is computed by <c>Classify</c> itself rather than written out, so the
+    /// two can never drift apart in this test.
+    /// </remarks>
+    [Fact]
+    public async Task A_host_that_does_not_resolve_is_classified_by_the_existing_mechanism()
+    {
+        var socket = new SocketException((int)SocketError.HostNotFound);
+        var inner = new HttpRequestException("connect failed", socket);
+        var handler = new ThrowingHandler(inner);
+
+        var error = await Assert.ThrowsAnyAsync<HttpRequestException>(
+            () => Provider(handler).FetchAsync(Request("AAPL.US")));
+
+        Assert.Same(inner, error.InnerException);
+        Assert.Same(socket, error.InnerException!.InnerException);
+
+        Assert.Equal(
+            ProviderTransportException.Classify(inner),
+            Assert.IsAssignableFrom<ITransportDiagnostic>(error).TransportDiagnostic);
+
+        Assert.Equal("socket:HostNotFound", ((ITransportDiagnostic)error).TransportDiagnostic);
+        Assert.Equal(1, handler.Calls);
     }
 
     [Fact]
@@ -345,12 +395,15 @@ public sealed class EodhdSplitsFeedTests : IAsyncLifetime
 
         public Uri? LastUri { get; private set; }
 
+        public int Calls { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
             ArgumentNullException.ThrowIfNull(request);
 
+            Calls++;
             LastUri = request.RequestUri;
 
             var content = new ByteArrayContent(_payload);
@@ -367,9 +420,16 @@ public sealed class EodhdSplitsFeedTests : IAsyncLifetime
 
         public ThrowingHandler(Exception exception) => _exception = exception;
 
+        /// <summary>How many times the connector reached the transport. Must never exceed one.</summary>
+        public int Calls { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
-            CancellationToken cancellationToken) =>
+            CancellationToken cancellationToken)
+        {
+            Calls++;
+
             throw _exception;
+        }
     }
 }

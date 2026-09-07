@@ -10,7 +10,10 @@ namespace AI.Investment.Infrastructure.Configuration;
 /// <para>
 /// <strong>The API key is a secret and has no default.</strong> It belongs in the user-secrets
 /// store in development and in an environment variable or managed secret store in production, and
-/// it is never written to a tracked configuration file. See <c>docs/SECURITY.md</c>.
+/// it is never written to a tracked configuration file. On Windows the environment variable is set
+/// per user, not per machine. <see cref="ApiKeyPath"/> and <see cref="ApiKeyEnvironmentVariable"/>
+/// are the two names to set it under, and both are derived from this class rather than restated in
+/// prose anywhere. See <c>docs/SECURITY.md</c>.
 /// </para>
 /// <para>
 /// <see cref="Enabled"/> defaults to <c>false</c>, so an installation that has configured nothing
@@ -35,6 +38,57 @@ public sealed class EodhdOptions : IValidatableObject
 
     /// <summary>The default host. Overridable so a test or a proxy can point elsewhere.</summary>
     public const string DefaultBaseAddress = "https://eodhd.com/";
+
+    /// <summary>
+    /// The full configuration path the credential is bound from.
+    /// </summary>
+    /// <remarks>
+    /// Derived from <see cref="SectionName"/> and the property name rather than written out, and
+    /// the same is true of <see cref="ApiKeyEnvironmentVariable"/>. Both used to be prose in five
+    /// places - this class's validation message, both connectors' refusals, and the comment blocks
+    /// in the two <c>appsettings</c> files. Prose does not get renamed with the property, and an
+    /// operator who follows a stale instruction sets a variable nothing reads, which presents as a
+    /// missing key rather than a misspelt one.
+    /// </remarks>
+    public static readonly string ApiKeyPath = SectionName + ":" + nameof(ApiKey);
+
+    /// <summary>
+    /// The environment variable that supplies <see cref="ApiKeyPath"/>.
+    /// </summary>
+    /// <remarks>
+    /// The double underscore is .NET's separator for a configuration level in an environment
+    /// variable name, so this is a translation of the path rather than a second name for it. On
+    /// Windows it is set as a <em>user</em> variable, which keeps it out of the machine-wide
+    /// environment and out of every other account on the box. See <c>docs/SECURITY.md</c>.
+    /// </remarks>
+    public static readonly string ApiKeyEnvironmentVariable =
+        ApiKeyPath.Replace(":", "__", StringComparison.Ordinal);
+
+    /// <summary>
+    /// What an enabled connector with no credential says. Names both mechanisms and no value.
+    /// </summary>
+    public static readonly string MissingApiKeyMessage =
+        "An EODHD API key is required when the connector is enabled. Set '" + ApiKeyPath +
+        "' in the user-secrets store, or the Windows user environment variable " +
+        ApiKeyEnvironmentVariable + " - never in a tracked configuration file. See " +
+        "docs/SECURITY.md.";
+
+    /// <summary>
+    /// What a credential carrying stray whitespace says.
+    /// </summary>
+    /// <remarks>
+    /// Worth its own message rather than being silently trimmed. EODHD authenticates through a
+    /// query parameter, so a trailing newline picked up from a paste becomes part of the
+    /// credential and the vendor answers 401 - which reads as a wrong key and sends an operator to
+    /// rotate a key that was fine. Refusing names the real fault; trimming would hide it and leave
+    /// the stored variable still wrong for everything else that reads it.
+    /// </remarks>
+    public static readonly string PaddedApiKeyMessage =
+        "The configured EODHD API key has leading or trailing whitespace. The credential travels " +
+        "in a query string, so the whitespace becomes part of it and EODHD answers 401 - a " +
+        "failure that reads as a wrong key rather than a wrong variable. This usually comes from " +
+        "a newline pasted into " + ApiKeyEnvironmentVariable + ". Set it again without the " +
+        "whitespace. The value itself is not shown.";
 
     /// <summary>Whether the connector is registered at all. False unless deliberately enabled.</summary>
     public bool Enabled { get; init; }
@@ -110,11 +164,11 @@ public sealed class EodhdOptions : IValidatableObject
 
         if (string.IsNullOrWhiteSpace(ApiKey))
         {
-            yield return new ValidationResult(
-                "An EODHD API key is required when the connector is enabled. Set it in the " +
-                "user-secrets store or the environment variable " +
-                "Providers__Eodhd__ApiKey - never in a tracked configuration file.",
-                [nameof(ApiKey)]);
+            yield return new ValidationResult(MissingApiKeyMessage, [nameof(ApiKey)]);
+        }
+        else if (!string.Equals(ApiKey, ApiKey.Trim(), StringComparison.Ordinal))
+        {
+            yield return new ValidationResult(PaddedApiKeyMessage, [nameof(ApiKey)]);
         }
 
         if (string.IsNullOrWhiteSpace(LicensingNotes))

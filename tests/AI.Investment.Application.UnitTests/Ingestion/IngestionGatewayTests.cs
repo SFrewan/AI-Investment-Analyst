@@ -530,7 +530,146 @@ public sealed class IngestionGatewayTests
             key => Assert.Equal($"{fingerprint}:{secondCycle}", key));
     }
 
-    /// <summary>The request the two tests above share, differing only in correlation.</summary>
+    /// <summary>
+    /// C. A failed attempt does not make the work permanently unfetchable.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The regression this guards is the one that stranded <c>NXST.US</c> and <c>SIRI.US</c>. The
+    /// seam claims the idempotency key <em>before</em> it invokes the effect and does not release
+    /// the claim when the effect throws - correctly, because a claim that evaporated on failure
+    /// would protect nothing. So a caller that derives its correlation from the request rather than
+    /// from the attempt gets one chance at that request for the lifetime of the store: the first
+    /// transport failure burns the key and every later attempt is refused as a duplicate.
+    /// </para>
+    /// <para>
+    /// Both attempts here fail, deliberately. The claim under test is not that the second one
+    /// succeeds - the provider is still broken - but that it was <em>allowed to try</em>: the effect
+    /// ran twice, so nothing about the first failure made the second attempt unreachable.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task A_failed_attempt_does_not_stop_a_later_attempt_under_a_new_correlation()
+    {
+        var firstAttempt = CorrelationId.Create("batch-2-a1-NXST-MarketPrices");
+        var secondAttempt = CorrelationId.Create("batch-4-a2-NXST-MarketPrices");
+
+        // Stands for a transport failure. The gateway treats any throwing effect identically, and
+        // naming a networking type here would put one in a layer that must not know about them.
+        var provider = new FakeDataProvider(
+            TestSource,
+            Capabilities(),
+            throwOnFetch: new IOException("the name did not resolve"));
+
+        var actions = new ClaimingActionGateway();
+        var runs = new RecordingRunStore();
+        var gateway = Claiming(provider, runs, actions);
+
+        var fingerprint = RequestFor(firstAttempt).Fingerprint();
+
+        // Identical work, so the test cannot pass by accidentally asking for something else.
+        Assert.Equal(fingerprint, RequestFor(secondAttempt).Fingerprint());
+
+        var first = await gateway.IngestAsync(RequestFor(firstAttempt));
+        var second = await gateway.IngestAsync(RequestFor(secondAttempt));
+
+        Assert.Equal(IngestionOutcome.Failed, first.Outcome);
+        Assert.Equal(IngestionOutcome.Failed, second.Outcome);
+
+        // The point of the test: the second attempt reached the provider. Refused would mean the
+        // seam had suppressed it as a duplicate of the first.
+        Assert.NotEqual(IngestionOutcome.Refused, second.Outcome);
+        Assert.Equal(2, provider.FetchCount);
+        Assert.Equal(2, actions.EffectInvocations);
+
+        Assert.Collection(
+            actions.Keys,
+            key => Assert.Equal($"{fingerprint}:{firstAttempt}", key),
+            key => Assert.Equal($"{fingerprint}:{secondAttempt}", key));
+    }
+
+    /// <summary>
+    /// D. Repeating an attempt is still suppressed, even after that attempt failed.
+    /// </summary>
+    /// <remarks>
+    /// The other half of C, and the one that proves the fix did not weaken anything. Scoping the
+    /// correlation to the attempt must not turn the seam into a retry loop: within one attempt the
+    /// duplicate rule is exactly as strict as it was, and a redelivered or re-entered attempt still
+    /// reaches the provider once and once only - failure included.
+    /// </remarks>
+    [Fact]
+    public async Task A_repeated_correlation_is_suppressed_even_when_the_first_attempt_failed()
+    {
+        var attempt = CorrelationId.Create("batch-2-a1-NXST-MarketPrices");
+
+        var provider = new FakeDataProvider(
+            TestSource,
+            Capabilities(),
+            throwOnFetch: new IOException("the name did not resolve"));
+
+        var actions = new ClaimingActionGateway();
+        var runs = new RecordingRunStore();
+        var gateway = Claiming(provider, runs, actions);
+
+        var first = await gateway.IngestAsync(RequestFor(attempt));
+        var second = await gateway.IngestAsync(RequestFor(attempt));
+
+        Assert.Equal(IngestionOutcome.Failed, first.Outcome);
+        Assert.Equal(IngestionOutcome.Refused, second.Outcome);
+        Assert.Equal(IngestionGateway.PolicyPermittedRule, second.RefusalRuleId);
+
+        // Once. The failure did not buy the caller a second go at the same act.
+        Assert.Equal(1, provider.FetchCount);
+        Assert.Equal(1, actions.EffectInvocations);
+    }
+
+    /// <summary>
+    /// E. A new correlation does not let completed work be acquired twice.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The two boundaries do different jobs and this is where the difference matters. Action
+    /// idempotency protects <em>one execution</em>: it stops the same authorised act happening
+    /// twice. The acquisition ledger protects <em>the work</em>: it stops the platform paying for
+    /// history it already holds. Scoping the correlation to the attempt loosens the first
+    /// deliberately, and this asserts it left the second exactly where it was.
+    /// </para>
+    /// <para>
+    /// If this ever fails, a resumed batch would re-fetch everything it had already acquired, at
+    /// full vendor cost, and the ledger's restart guarantee would be gone.
+    /// </para>
+    /// </remarks>
+    [Fact]
+    public async Task A_completed_fingerprint_stays_suppressible_under_any_later_correlation()
+    {
+        var firstAttempt = CorrelationId.Create("batch-2-a1-NXST-MarketPrices");
+        var laterAttempt = CorrelationId.Create("batch-4-a2-NXST-MarketPrices");
+
+        var provider = new FakeDataProvider(TestSource, Capabilities(), [Page("{\"page\":1}")]);
+        var actions = new ClaimingActionGateway();
+        var runs = new RecordingRunStore();
+        var gateway = Claiming(provider, runs, actions);
+
+        var completed = await gateway.IngestAsync(RequestFor(firstAttempt));
+
+        Assert.Equal(IngestionOutcome.Succeeded, completed.Outcome);
+
+        var fingerprint = RequestFor(firstAttempt).Fingerprint();
+        var later = RequestFor(laterAttempt);
+
+        // The correlation changed; the identity of the work did not.
+        Assert.Equal(fingerprint, later.Fingerprint());
+        Assert.NotEqual(firstAttempt, laterAttempt);
+
+        // The ledger suppresses on the fingerprint, so the new correlation buys nothing here. This
+        // is the check every batch runner makes before it spends an authorisation.
+        Assert.True(await runs.HasCompletedAsync(fingerprint));
+        Assert.True(await runs.HasCompletedAsync(later.Fingerprint()));
+
+        Assert.Equal(1, provider.FetchCount);
+    }
+
+    /// <summary>The request the tests above share, differing only in correlation.</summary>
     private static IngestionRequest RequestFor(CorrelationId correlation) =>
         IngestionRequest.Create(
             TestSource,

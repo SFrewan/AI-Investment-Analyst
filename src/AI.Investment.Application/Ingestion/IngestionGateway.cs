@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using AI.Investment.Application.Abstractions;
 using AI.Investment.Application.Actions;
 using AI.Investment.Domain.Actions;
@@ -50,6 +51,9 @@ public sealed class IngestionGateway : IIngestionGateway
     public const string ProviderAvailableRule = "ingestion.provider-available@1";
     public const string WithinRateLimitRule = "ingestion.within-rate-limit@1";
     public const string PolicyPermittedRule = "ingestion.policy-permitted@1";
+
+    /// <summary>How deep <see cref="Describe"/> walks an inner-exception chain.</summary>
+    internal const int MaxDiagnosticDepth = 5;
 
     private static readonly ActionType IngestActionType = ActionType.Create("ingestion.fetch");
     private static readonly ProposedBy Proposer = ProposedBy.Service("ingestion-gateway", "1.0");
@@ -318,14 +322,74 @@ public sealed class IngestionGateway : IIngestionGateway
             $"{request.Fingerprint()}:{request.CorrelationId}");
 
     /// <summary>
-    /// Describes a failure in terms safe to store permanently.
+    /// Describes a failure in terms safe to store permanently, and precise enough to act on.
     /// </summary>
     /// <remarks>
-    /// The exception type and message only - no stack trace, no inner-exception chain. This text
-    /// goes into an append-only ledger that cannot be redacted, and a provider's exception message
-    /// is one of the likelier places for a URL with an embedded key to surface. The full detail is
-    /// already in the audit trail the seam wrote before rethrowing.
+    /// <para>
+    /// <strong>Type names only. Never a message, never a URL, never a response body.</strong> This
+    /// text goes into an append-only ledger that cannot be redacted afterwards, and a provider's
+    /// exception message is one of the likelier places for a URL with an embedded key to surface.
+    /// The guarantee is structural rather than a redaction pass: nothing that can carry a
+    /// credential is read at all, so there is no pattern to get wrong and nothing to keep in step
+    /// with a provider's future message format.
+    /// </para>
+    /// <para>
+    /// <strong>Why the chain, and not the outer type alone.</strong> Fifty-seven requests failed in
+    /// one run and every one recorded <c>HttpRequestException during ingestion.</c> - which is
+    /// equally true of a name-resolution failure, a refused connection, a TLS fault and a 429, and
+    /// so distinguished none of them. The inner chain separates the largest part of that: a status
+    /// the server chose arrives alone, while a connection that never opened arrives wrapped around
+    /// an <c>IOException</c> and a socket failure. That is the difference between "the vendor
+    /// refused us" and "we never reached the vendor", and it is the one this run needed.
+    /// </para>
+    /// <para>
+    /// <strong>What this deliberately does not record, and where it belongs.</strong> The socket
+    /// error code and the HTTP status code would separate the remaining cases exactly, and neither
+    /// can carry a secret. They are absent because reading them means naming
+    /// <c>System.Net.Sockets</c> and <c>System.Net.Http</c> types here, and this is the application
+    /// layer: <c>DataPlaneRuleTests.Application_cannot_reach_the_network</c> refuses that, on the
+    /// ground that an application service which knows about HTTP is one step from making a request
+    /// outside the gateway. The rule is right and is not being weakened. Classifying a transport
+    /// failure in those terms is a connector's job, and belongs in Infrastructure with the
+    /// connector that produced it.
+    /// </para>
     /// </remarks>
-    private static string Describe(Exception exception) =>
-        $"{exception.GetType().Name} during ingestion.";
+    internal static string Describe(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        var chain = new StringBuilder();
+        var current = (Exception?)exception;
+        var depth = 0;
+
+        while (current is not null && depth < MaxDiagnosticDepth)
+        {
+            if (depth > 0)
+            {
+                chain.Append(" <- ");
+            }
+
+            chain.Append(current.GetType().Name);
+
+            if (current is ITransportDiagnostic diagnostic)
+            {
+                // A closed-set token the connector built from framework enumerations. This layer
+                // reads a string and still knows nothing about HTTP, which is what keeps
+                // DataPlaneRuleTests satisfied while the ledger gets the fact it needs.
+                chain.Append(CultureInfo.InvariantCulture, $"[{diagnostic.TransportDiagnostic}]");
+            }
+
+            current = current.InnerException;
+            depth++;
+        }
+
+        if (current is not null)
+        {
+            // Bounded rather than truncated mid-word: a chain deeper than this has stopped saying
+            // anything new, and an unbounded walk is an unbounded string in an append-only row.
+            chain.Append(" <- ...");
+        }
+
+        return chain.Append(" during ingestion.").ToString();
+    }
 }

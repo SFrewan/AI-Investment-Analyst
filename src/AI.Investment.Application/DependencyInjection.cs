@@ -16,6 +16,7 @@ using AI.Investment.Application.Validation;
 using AI.Investment.Application.Retention;
 using AI.Investment.Application.Sources.ActivateSource;
 using AI.Investment.Application.Sources.RegisterKnownSources;
+using AI.Investment.Application.Sources.ReconcileSourceCoverage;
 using AI.Investment.Domain.Actions;
 using AI.Investment.Domain.Opportunities;
 using Microsoft.Extensions.DependencyInjection;
@@ -155,6 +156,12 @@ public static class DependencyInjection
 
         services.AddScoped<RegisterKnownSourcesHandler>();
         services.AddScoped<ActivateSourceHandler>();
+
+        // Registration fills gaps and does not reconcile, so a connector that gains a category in
+        // a later build keeps it to itself until something asks the registry to catch up. This is
+        // that something: it widens a stored row to the union of what it holds and what this build
+        // declares, and touches nothing else about it.
+        services.AddScoped<ReconcileSourceCoverageHandler>();
 
         services.AddScoped<CreateCompanyHandler>();
         services.AddScoped<GetCompanyHandler>();

@@ -13,6 +13,7 @@ using AI.Investment.Domain.Ingestion;
 using AI.Investment.Domain.Opportunities.Equity;
 using AI.Investment.Domain.Sources;
 using AI.Investment.Domain.ValueObjects;
+using AI.Investment.Infrastructure.Configuration;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -56,6 +57,20 @@ public sealed class BackfillApiFactory : WebApplicationFactory<Program>
         builder.ConfigureAppConfiguration((_, configuration) =>
         {
             configuration.AddUserSecrets(typeof(Program).Assembly, optional: true);
+
+            // And the environment again, after them. Sources added here are appended, so the
+            // user-secrets store above would otherwise outrank the environment - reversing the
+            // precedence the host itself uses and the one docs/SECURITY.md states. That matters
+            // for exactly one setting: this is the fixture the billable backfill runs under, and a
+            // stale key left in a developer's secrets store would quietly win over the environment
+            // variable the operator just set, spending a subscription against the wrong account and
+            // reporting a 401 that names neither.
+            //
+            // The stored per-user environment first, then the process block, so that a variable
+            // set after this test runner's parent process started still arrives. Both halves are
+            // needed and the order between them is the point: see WindowsUserEnvironment.
+            configuration.AddWindowsUserEnvironment();
+            configuration.AddEnvironmentVariables();
 
             configuration.AddInMemoryCollection(new Dictionary<string, string?>
             {

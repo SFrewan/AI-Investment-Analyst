@@ -1,0 +1,14 @@
+{
+  "Status": "SUPERSEDED BY INSTALLATION - THIS FILE IS NOT AN AUTHORISATION",
+  "Note": "This draft was reviewed and installed. Its content now lives at the path below. This file deliberately carries no Schema, no Symbols and no counters, so it cannot be read as an authorisation by anything, and it is kept only so that the reports which cite this path still resolve.",
+  "InstalledAs": "declarations/acquisition-sec-edgar-gate6-six-members-2021-09-to-2026-08.json",
+  "AuthorizationId": "sec-edgar-gate6-six-members-2021-09-to-2026-08",
+  "AuthorizationDigest": "499f211f9c931c78d7faf1beb76eef3205fec12cb28db06eeeda461964567682",
+  "DigestUnchangedByInstallation": true,
+  "Reports": [
+    "artifacts/verify/sec-edgar-six-member-acquisition-proposal.md",
+    "artifacts/verify/sec-edgar-six-member-draft-review.md",
+    "artifacts/verify/sec-edgar-six-member-preinstall-review.md",
+    "artifacts/verify/sec-edgar-six-member-install-report.md"
+  ]
+}

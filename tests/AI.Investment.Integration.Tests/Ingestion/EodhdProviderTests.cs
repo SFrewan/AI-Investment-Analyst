@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using AI.Investment.Application.Abstractions;
+using AI.Investment.Application.Ingestion;
 using AI.Investment.Domain.Common;
 using AI.Investment.Domain.Ingestion;
 using AI.Investment.Domain.Sources;
@@ -159,13 +160,28 @@ public sealed class EodhdProviderTests
     [Fact]
     public async Task A_transport_failure_is_reported_without_the_request()
     {
-        var handler = new ThrowingHandler(new HttpRequestException($"connect to ?api_token={Key} failed"));
+        var inner = new HttpRequestException($"connect to ?api_token={Key} failed");
+        var handler = new ThrowingHandler(inner);
 
-        var exception = await Assert.ThrowsAsync<HttpRequestException>(
+        // ThrowsAny rather than Throws. The connector now raises a ProviderTransportException,
+        // which IS an HttpRequestException and carries a classification besides. Pinning the exact
+        // type made "keep the inner exception" look like a breaking change - and keeping it is the
+        // whole point: discarding it is what left fifty-seven transport failures indistinguishable
+        // from one another in the ledger.
+        var exception = await Assert.ThrowsAnyAsync<HttpRequestException>(
             () => Provider(handler).FetchAsync(Request("AAPL.US")));
 
         Assert.DoesNotContain(Key, exception.Message, StringComparison.Ordinal);
         Assert.Contains(EodhdProvider.Redaction, exception.Message, StringComparison.Ordinal);
+
+        // The chain survives the wrapping, which is what makes the failure diagnosable at all.
+        Assert.Same(inner, exception.InnerException);
+
+        // And the classification carries no part of what the transport wrote.
+        var diagnostic = Assert.IsAssignableFrom<ITransportDiagnostic>(exception).TransportDiagnostic;
+
+        Assert.DoesNotContain(Key, diagnostic, StringComparison.Ordinal);
+        Assert.DoesNotContain("api_token", diagnostic, StringComparison.OrdinalIgnoreCase);
     }
 
     // ---- symbols ----------------------------------------------------------------------------

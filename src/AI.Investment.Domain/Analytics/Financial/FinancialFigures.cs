@@ -48,6 +48,30 @@ public static class FinancialFigures
     // ---- share counts --------------------------------------------------------------------
     public const string DilutedShares = "financials.diluted-shares";
 
+    // ---- the same income-statement and cash-flow lines, for a quarter -----------------------
+    //
+    // Separate names, never a flag on the annual ones. Every figure above means "for a year" and
+    // twelve sealed declarations, every stored observation and every calculator depend on it
+    // continuing to mean that. A quarter's revenue over a year's net income is wrong by a factor
+    // of four and looks entirely plausible, so the two must not be addressable by one name.
+    //
+    // Only duration figures appear here. A balance-sheet item is an instant, not a period, and
+    // EDGAR already reports it quarterly under the annual name - which is why total assets has
+    // roughly four times as many stored observations as net income does.
+    public const string QuarterlyPrefix = "financials.quarterly.";
+
+    public const string QuarterlyRevenue = "financials.quarterly.revenue";
+    public const string QuarterlyGrossProfit = "financials.quarterly.gross-profit";
+    public const string QuarterlyOperatingIncome = "financials.quarterly.operating-income";
+    public const string QuarterlyNetIncome = "financials.quarterly.net-income";
+
+    public const string QuarterlyDepreciationAndAmortisation =
+        "financials.quarterly.depreciation-and-amortisation";
+
+    public const string QuarterlyOperatingCashFlow = "financials.quarterly.operating-cash-flow";
+    public const string QuarterlyCapitalExpenditure = "financials.quarterly.capital-expenditure";
+    public const string QuarterlyDilutedShares = "financials.quarterly.diluted-shares";
+
     // ---- market ----------------------------------------------------------------------------
     // Not statement line items, but evidenced figures about the same subject, carried in the same
     // bag so a valuation ratio can put a price beside an earnings figure without a second mechanism.

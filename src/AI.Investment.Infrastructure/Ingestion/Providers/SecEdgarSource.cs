@@ -47,6 +47,7 @@ public sealed class SecEdgarSource : ISourceDefinition
                 DataCategory.CompanyProfile,
                 DataCategory.FinancialStatements,
                 DataCategory.EarningsDisclosure,
+                DataCategory.MarketWideDisclosure,
             ],
 
             // Filings arrive when companies file them. A daily cadence would report a source

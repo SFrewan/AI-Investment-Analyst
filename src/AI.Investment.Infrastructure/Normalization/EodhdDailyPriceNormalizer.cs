@@ -201,7 +201,10 @@ public sealed class EodhdDailyPriceNormalizer : INormalizer
                     "positive. A zero or negative closing price is a broken feed, not a market event.");
             }
 
-            var sessionCloseUtc = tradingDate + session.SessionCloseUtc;
+            // Resolved per row, not once per document: a five-year payload spans daylight saving
+            // transitions, and stamping the whole of it from one value puts a third of the history
+            // an hour early. Non-US exchanges get the configured value unchanged.
+            var sessionCloseUtc = tradingDate + UsEquitySessionCalendar.CloseOn(session, tradingDate);
             var publishedAtUtc = sessionCloseUtc + session.PublicationDelay;
 
             if (publishedAtUtc > input.RetrievedAtUtc)
@@ -266,13 +269,13 @@ public sealed class EodhdDailyPriceNormalizer : INormalizer
     /// </remarks>
     private static string[] Caveats(ExchangeSessionOptions session, string symbol) =>
     [
-        string.Create(
-            CultureInfo.InvariantCulture,
-            $"EODHD supplied the trading date and the closing price for '{symbol}' and no times. " +
-            $"The session close ({session.SessionCloseUtc:hh\\:mm} UTC) and the publication delay " +
-            $"({session.PublicationDelay:g}) are this installation's stated facts about exchange " +
-            $"'{session.Code}', not the vendor's. The price is the raw close, not the " +
-            $"split- or dividend-adjusted one."),
+        UsEquitySessionCalendar.AppliesTo(session.Code)
+            ? string.Create(
+                CultureInfo.InvariantCulture,
+                $"EODHD supplied the trading date and the closing price for '{symbol}' and no times. The session close ({session.SessionCloseUtc:hh\\:mm} UTC on daylight time, an hour later on standard time, resolved per trading date) and the publication delay ({session.PublicationDelay:g}) are this installation's stated facts about exchange '{session.Code}', not the vendor's. Holidays and half-day closes are not modelled. The price is the raw close, not the split- or dividend-adjusted one.")
+            : string.Create(
+                CultureInfo.InvariantCulture,
+                $"EODHD supplied the trading date and the closing price for '{symbol}' and no times. The session close ({session.SessionCloseUtc:hh\\:mm} UTC) and the publication delay ({session.PublicationDelay:g}) are this installation's stated facts about exchange '{session.Code}', not the vendor's. The price is the raw close, not the split- or dividend-adjusted one."),
     ];
 
     private static bool TryReadDate(JsonElement row, out DateTime value)

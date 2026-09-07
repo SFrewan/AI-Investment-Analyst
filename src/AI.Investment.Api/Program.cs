@@ -91,6 +91,18 @@ public sealed class Program
     {
         var builder = WebApplication.CreateBuilder(args);
 
+        // The stored per-user environment, then the process environment again on top of it.
+        //
+        // The second line looks redundant and is not. A process receives a copy of its parent's
+        // environment block, so a user variable set after that parent started is invisible to it
+        // and to everything it launches - which is why a credential can be confirmed present with
+        // GetEnvironmentVariable(name, 'User') and still not reach the application. The first line
+        // reads where the value is actually stored; the second restores the process block's
+        // precedence over it, so setting a variable for one run overrides the stored one exactly
+        // as it always did. See WindowsUserEnvironment.
+        builder.Configuration.AddWindowsUserEnvironment();
+        builder.Configuration.AddEnvironmentVariables();
+
         ConfigureLogging(builder);
         ConfigureServices(builder);
 
