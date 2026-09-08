@@ -26,13 +26,15 @@ public sealed class ProviderResponse
         string mediaType,
         DateTime retrievedAtUtc,
         string? sourceRecordId,
-        string? continuationToken)
+        string? continuationToken,
+        RequestProvenance? provenance)
     {
         Payload = payload;
         MediaType = mediaType;
         RetrievedAtUtc = retrievedAtUtc;
         SourceRecordId = sourceRecordId;
         ContinuationToken = continuationToken;
+        Provenance = provenance;
     }
 
     /// <summary>The exact bytes received. Not normalised, not re-encoded.</summary>
@@ -65,12 +67,33 @@ public sealed class ProviderResponse
 
     public bool HasMore => ContinuationToken is not null;
 
+    /// <summary>
+    /// The redacted description of the exchange that produced these bytes, when the connector
+    /// captured one. Null from a connector that has not been instrumented yet.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This is the ONE place request detail is permitted on this object, and it is permitted only
+    /// because <see cref="RequestProvenance"/> is allow-listed at construction and can hold no
+    /// credential. The remark above still governs everything else: the caller must not pass this to
+    /// the archive, and <c>IngestionGateway</c> does not - <c>IRawResponseArchive.StoreAsync</c>
+    /// takes payload, media type and retrieval time as explicit arguments and never sees this
+    /// object.
+    /// </para>
+    /// <para>
+    /// Optional so that a connector which captures nothing behaves exactly as it did before, rather
+    /// than being forced to invent evidence it does not have.
+    /// </para>
+    /// </remarks>
+    public RequestProvenance? Provenance { get; }
+
     public static ProviderResponse Create(
         ReadOnlyMemory<byte> payload,
         string mediaType,
         DateTime retrievedAtUtc,
         string? sourceRecordId = null,
-        string? continuationToken = null)
+        string? continuationToken = null,
+        RequestProvenance? provenance = null)
     {
         if (string.IsNullOrWhiteSpace(mediaType))
         {
@@ -103,7 +126,8 @@ public sealed class ProviderResponse
             trimmedMediaType,
             retrievedAtUtc,
             Normalise(sourceRecordId, 200, nameof(sourceRecordId)),
-            token);
+            token,
+            provenance);
     }
 
     private static string? Normalise(string? value, int maxLength, string parameterName)

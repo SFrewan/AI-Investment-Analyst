@@ -55,6 +55,12 @@ public static class DependencyInjection
         // Fetch and interpret as one operation, so no caller has to remember to do both.
         services.AddScoped<IDataAcquisition, DataAcquisitionService>();
 
+        // Fetch and interpret are separable, and this is the second half on its own: re-read a
+        // payload the archive already holds, under the identity of the run that fetched it. No
+        // provider, no rate limiter, no acquisition authorisation - see ArchivedPayloadReplayService
+        // for why its constructor is the contract.
+        services.AddScoped<IArchivedPayloadReplay, ArchivedPayloadReplayService>();
+
         // Read-only, and deliberately outside the seam: asking how current the data is has no
         // side effect, and auditing reads would bury the record of what actually changed.
         services.AddScoped<IFreshnessReport, FreshnessReport>();

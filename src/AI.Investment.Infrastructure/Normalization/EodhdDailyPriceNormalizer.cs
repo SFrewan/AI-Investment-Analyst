@@ -40,9 +40,30 @@ namespace AI.Investment.Infrastructure.Normalization;
 /// byte.
 /// </para>
 /// <para>
-/// <strong>A bad row quarantines the payload rather than being skipped</strong>, for the same
-/// reason the operator-export normaliser does it: a row that cannot be read is a hole in a time
-/// series, and a series with an invisible hole produces confident, wrong returns.
+/// <strong>An unreadable row quarantines the payload; a non-positive close refuses the row.</strong>
+/// The general rule is the operator-export normaliser's and has not moved: a row that cannot be
+/// read is a hole in a time series, and a series with an invisible hole produces confident, wrong
+/// returns. One case is different, and it is different because the platform now has evidence about
+/// it. A row whose <c>close</c> is zero or negative is not unreadable - it is read perfectly, and
+/// what it says is not a price. Eleven archived payloads carried between one and twenty such rows
+/// against 556 to 969 sound ones, and refusing the whole document turned an ingestion defect into
+/// eleven members with no price history at all.
+/// </para>
+/// <para>
+/// So that one row is dropped and the rest of the document is read, with the count and the row
+/// numbers reported as <see cref="NormalizationResult.Partial"/>. The hole stays visible - it is
+/// carried on the result, and downstream a dropped row is simply a session with no observation,
+/// which the coverage rule measures as a gap exactly as it measures any other. Nothing is invented
+/// to fill it, and a zero is never recorded as a price: two consumers one layer down
+/// (<c>SplitAdjustment</c>'s continuity walk and <c>PriceRecoveryRule.IsWellFormed</c>) treat a
+/// non-positive close as malformed, and the first of them would silently stop checking either side
+/// of it.
+/// </para>
+/// <para>
+/// <strong>Every other refusal is unchanged and still takes the whole payload</strong>: a missing
+/// or non-numeric close, a bad date, a row that is not an object, a document that is not an array,
+/// an undecodable payload, an unstated session, an unreadable symbol, an impossible ordering, and a
+/// document from which nothing at all could be read.
 /// </para>
 /// </remarks>
 public sealed class EodhdDailyPriceNormalizer : INormalizer
@@ -175,6 +196,11 @@ public sealed class EodhdDailyPriceNormalizer : INormalizer
         var caveats = Caveats(session, symbol);
         var index = 0;
 
+        // The rows refused for a non-positive close, by their position in the document. Kept as
+        // numbers rather than a count so the reason names them: an operator asking "which rows?"
+        // should not have to re-read the payload to find out.
+        var refused = new List<int>();
+
         foreach (var row in rows.EnumerateArray())
         {
             index++;
@@ -193,12 +219,26 @@ public sealed class EodhdDailyPriceNormalizer : INormalizer
                     $"Row {index}: the '{DateField}' field is missing or is not an ISO calendar date.");
             }
 
-            if (!TryReadClose(row, out var close))
+            var reading = ReadClose(row, out var close);
+
+            if (reading == CloseReading.Unreadable)
             {
                 return NormalizationResult.Quarantine(
                     DailyClosePriceNormalizer.UnreadableRowRule,
-                    $"Row {index}: the '{CloseField}' field is missing, is not a number, or is not " +
-                    "positive. A zero or negative closing price is a broken feed, not a market event.");
+                    $"Row {index}: the '{CloseField}' field is missing or is not a number. A row " +
+                    "that cannot be read is a hole in a time series, and a series with an invisible " +
+                    "hole produces confident, wrong returns.");
+            }
+
+            if (reading == CloseReading.NotPositive)
+            {
+                // Read perfectly, and not a price. Dropped rather than recorded: a zero close
+                // admitted as an observation would make SplitAdjustment skip the continuity check
+                // on both sides of it, and that is the one rule the coverage gate counts refusals
+                // from. Dropping leaves a visible hole; admitting would leave a blind spot.
+                refused.Add(index);
+
+                continue;
             }
 
             // Resolved per row, not once per document: a five-year payload spans daylight saving
@@ -249,14 +289,27 @@ public sealed class EodhdDailyPriceNormalizer : INormalizer
 
         if (observations.Count == 0)
         {
+            // Reached by an empty array and by a document whose every row was refused. Both are
+            // payload-level quarantine, and deliberately so: a document the platform could not use
+            // must not become a successful read of nothing just because row-level refusal exists.
             return NormalizationResult.Quarantine(
                 DailyClosePriceNormalizer.EmptySeriesRule,
-                "The document is an empty array. An instrument with no history and a request that " +
-                "asked for a range the vendor does not cover are different problems, and recording " +
-                "no observations would make them look the same.");
+                "No row in the document could be recorded. An instrument with no history and a " +
+                "request that asked for a range the vendor does not cover are different problems, " +
+                "and recording no observations would make them look the same.");
         }
 
-        return NormalizationResult.Normalized(observations);
+        return refused.Count == 0
+            ? NormalizationResult.Normalized(observations)
+            : NormalizationResult.Partial(
+                observations,
+                DailyClosePriceNormalizer.UnreadableRowRule,
+                $"{refused.Count} row(s) stated a '{CloseField}' of zero or less and were dropped: " +
+                $"row(s) {string.Join(", ", refused)}. A non-positive closing price is a broken " +
+                "feed, not a market event, so it is neither recorded as a price nor allowed to " +
+                "refuse the sound rows around it. Each dropped row leaves a session with no " +
+                "observation, which the coverage rule measures as it measures any other gap.",
+                refused.Count);
     }
 
     /// <summary>
@@ -311,13 +364,32 @@ public sealed class EodhdDailyPriceNormalizer : INormalizer
         return true;
     }
 
-    private static bool TryReadClose(JsonElement row, out decimal value)
+    /// <summary>What a row's <c>close</c> field turned out to be.</summary>
+    /// <remarks>
+    /// The two failures are separated because they mean different things and now have different
+    /// consequences. A field that is missing or is not a number leaves the platform unable to read
+    /// the row at all, and it refuses the document. A field that reads cleanly as zero or less is a
+    /// row the platform understands and will not record, and it refuses only itself.
+    /// </remarks>
+    private enum CloseReading
+    {
+        /// <summary>A number greater than zero.</summary>
+        Ok = 0,
+
+        /// <summary>Missing, or not a number at all.</summary>
+        Unreadable = 1,
+
+        /// <summary>A number, and zero or less.</summary>
+        NotPositive = 2,
+    }
+
+    private static CloseReading ReadClose(JsonElement row, out decimal value)
     {
         value = 0m;
 
         if (!row.TryGetProperty(CloseField, out var field))
         {
-            return false;
+            return CloseReading.Unreadable;
         }
 
         switch (field.ValueKind)
@@ -339,10 +411,10 @@ public sealed class EodhdDailyPriceNormalizer : INormalizer
                 break;
 
             default:
-                return false;
+                return CloseReading.Unreadable;
         }
 
-        return value > 0m;
+        return value > 0m ? CloseReading.Ok : CloseReading.NotPositive;
     }
 
     /// <summary>Decodes strictly: an undecodable byte is an error rather than a question mark.</summary>

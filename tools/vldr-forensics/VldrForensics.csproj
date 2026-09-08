@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Read-only forensics on what the one pilot request left behind.
+
+    It references Infrastructure only to obtain Npgsql transitively; it uses none of the
+    application's types, composes no container and opens no provider. Every statement it runs is a
+    SELECT.
+
+    Deliberately NOT in AI-Investment-Analyst.sln.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>AI.Investment.Tools.VldrForensics</RootNamespace>
+    <AssemblyName>vldr-forensics</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AI.Investment.Infrastructure\AI.Investment.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

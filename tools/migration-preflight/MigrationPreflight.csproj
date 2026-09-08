@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    READ-ONLY preflight for the six remaining Category E no-series members.
+
+    Read-only by construction: this tool never resolves IArchivedPayloadReplay and never constructs
+    ArchivedPayloadReplayService - it only reflects over that type to report its dependency shape.
+    Every database access is a SELECT. Both connectors are pinned off.
+
+    It DOES call the real INormalizer on archived bytes. That is a parse and nothing else: the
+    interface's own contract is that implementations do not fetch, store, or delete. It answers
+    "what would a replay record?" without recording anything.
+
+    Deliberately NOT in AI-Investment-Analyst.sln.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>AI.Investment.Tools.MigrationPreflight</RootNamespace>
+    <AssemblyName>migration-preflight</AssemblyName>
+    <IsPackable>false</IsPackable>
+
+    <!-- Relaxed for this tool only; the repository-wide settings are untouched. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AI.Investment.Infrastructure\AI.Investment.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

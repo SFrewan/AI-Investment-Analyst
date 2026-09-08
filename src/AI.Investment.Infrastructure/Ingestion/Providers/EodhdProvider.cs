@@ -102,9 +102,9 @@ public sealed class EodhdProvider : IDataProvider
                 "character is not a ticker - it is an attempt to reach a different endpoint.");
         }
 
-        var uri = BuildUri(symbol, request.Window);
+        var outbound = BuildRequest(symbol, request.Window);
 
-        using var message = new HttpRequestMessage(HttpMethod.Get, uri);
+        using var message = new HttpRequestMessage(HttpMethod.Get, outbound.Uri);
         message.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(MediaType));
 
         HttpResponseMessage response;
@@ -154,11 +154,27 @@ public sealed class EodhdProvider : IDataProvider
                     "the second would invent a market that did not trade.");
             }
 
+            // Evidence capture. This is the only point at which the status code and the headers
+            // exist at all - everything below this line has already lost them, which is exactly how
+            // 324 empty responses came to be indistinguishable from one another. Nothing here can
+            // change what the payload normalises to; it only records what was asked and what came
+            // back.
+            var provenance = RequestProvenance.Create(
+                EndpointTemplate,
+                outbound.RedactedParameters,
+                outbound.RequestedFromUtc,
+                outbound.RequestedToUtc,
+                (int)response.StatusCode,
+                SafeHeaders(response),
+                CorrelationIdOf(response));
+
             return ProviderResponse.Create(
                 payload,
                 response.Content.Headers.ContentType?.MediaType ?? MediaType,
                 _clock.UtcNow,
-                sourceRecordId: symbol);
+                sourceRecordId: symbol,
+                continuationToken: null,
+                provenance: provenance);
 
             // No continuation token. The end-of-day endpoint returns the whole requested range in
             // one document; inventing paging the vendor does not offer would be building a request
@@ -210,8 +226,11 @@ public sealed class EodhdProvider : IDataProvider
     /// than left to the vendor's defaults, so a change to those defaults cannot silently alter what
     /// the archive holds.
     /// </remarks>
-    private string BuildUri(string symbol, DateRange? window)
+    private OutboundRequest BuildRequest(string symbol, DateRange? window)
     {
+        // The recorded parameters are derived from the SAME values that go on the wire, in the same
+        // method, so the evidence cannot drift from the request it claims to describe. api_token is
+        // added to the query and never to the map - the one asymmetry in here, and the point of it.
         var query = new List<string>(5)
         {
             "api_token=" + Uri.EscapeDataString(_options.ApiKey),
@@ -219,13 +238,92 @@ public sealed class EodhdProvider : IDataProvider
             "period=d",
         };
 
+        var recorded = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["symbol"] = symbol,
+            ["fmt"] = "json",
+            ["period"] = "d",
+        };
+
+        DateTime? from = null;
+        DateTime? to = null;
+
         if (window is not null)
         {
-            query.Add("from=" + window.StartUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
-            query.Add("to=" + window.EndUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+            var fromText = window.StartUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            var toText = window.EndUtc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+            query.Add("from=" + fromText);
+            query.Add("to=" + toText);
+
+            recorded["from"] = fromText;
+            recorded["to"] = toText;
+
+            from = window.StartUtc;
+            to = window.EndUtc;
         }
 
-        return $"api/eod/{Uri.EscapeDataString(symbol)}?{string.Join('&', query)}";
+        return new OutboundRequest(
+            $"api/eod/{Uri.EscapeDataString(symbol)}?{string.Join('&', query)}",
+            recorded,
+            from,
+            to);
+    }
+
+    /// <summary>The route as a template. The symbol travels in the parameter map, not in here.</summary>
+    internal const string EndpointTemplate = "api/eod/{symbol}";
+
+    /// <summary>What goes on the wire, and the redacted description of it. Never leaves this class together.</summary>
+    private sealed record OutboundRequest(
+        string Uri,
+        IReadOnlyDictionary<string, string> RedactedParameters,
+        DateTime? RequestedFromUtc,
+        DateTime? RequestedToUtc);
+
+    /// <summary>
+    /// The allow-listed response headers, and nothing else.
+    /// </summary>
+    /// <remarks>
+    /// The filter is applied twice - here, and again in <c>RequestProvenance.Create</c>. That is not
+    /// redundancy for its own sake: this method decides what is read out of an HTTP object at all,
+    /// and the application-layer filter decides what may be persisted. Either one alone would be a
+    /// single point of failure for a credential.
+    /// </remarks>
+    private static Dictionary<string, string> SafeHeaders(HttpResponseMessage response)
+    {
+        var kept = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        void Take(IEnumerable<KeyValuePair<string, IEnumerable<string>>> headers)
+        {
+            foreach (var header in headers)
+            {
+                if (!RequestProvenance.AllowedHeaderNames.Contains(header.Key))
+                {
+                    continue;
+                }
+
+                kept[header.Key] = string.Join(", ", header.Value);
+            }
+        }
+
+        Take(response.Headers);
+        Take(response.Content.Headers);
+
+        return kept;
+    }
+
+    /// <summary>The vendor's own request reference, if it sent one worth quoting in a support case.</summary>
+    private static string? CorrelationIdOf(HttpResponseMessage response)
+    {
+        foreach (var name in new[] { "x-request-id", "x-correlation-id" })
+        {
+            if (response.Headers.TryGetValues(name, out var values))
+            {
+                return values.FirstOrDefault();
+            }
+        }
+
+        return null;
     }
 
     /// <summary>Replaces the configured key wherever it appears in text from outside.</summary>

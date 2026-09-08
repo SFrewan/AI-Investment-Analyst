@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    ONE controlled live EODHD price acquisition, against the TEST database only.
+
+    The mirror image of tools\replay-recover, and deliberately so. That tool requires
+    ai_investment and refuses ai_investment_tests, because it was recovering evidence. This one
+    requires ai_investment_tests and refuses ai_investment, because it is spending a real provider
+    request to prove a wiring change - and a wiring proof has no business writing to the evidence
+    base.
+
+    Composed through the production AddApplication + AddInfrastructure, exactly as the API host
+    does: the source registry, the admission rules, the rate limiter, the safety seam, the policy
+    engine, the idempotency store, the archive and the normalisation pipeline are all the real
+    ones. The only overrides are the connection string and the archive root.
+
+    It makes AT MOST ONE provider request, through IDataAcquisition - the existing acquisition
+    contract - and it refuses to reach the network at all unless every precondition passed first.
+
+    THE API KEY. Read from the API's user-secrets file directly as an optional JSON configuration
+    source, rather than through the UserSecrets package. Central package management governs this
+    repository, so adding a package here would mean editing Directory.Packages.props for a
+    throwaway tool. Reading the file the API already reads costs nothing and copies the secret
+    nowhere. The environment variable Providers__Eodhd__ApiKey works too.
+
+    Deliberately NOT in AI-Investment-Analyst.sln.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>AI.Investment.Tools.VldrPilot</RootNamespace>
+    <AssemblyName>vldr-pilot</AssemblyName>
+    <IsPackable>false</IsPackable>
+
+    <!-- Relaxed for this tool only; the repository-wide settings are untouched. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AI.Investment.Infrastructure\AI.Investment.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

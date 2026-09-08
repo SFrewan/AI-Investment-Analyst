@@ -197,9 +197,24 @@ internal sealed class RecordingUnreplayableEvidenceStore : IUnreplayableEvidence
         Task.FromResult(Recorded.Any(m => m.Id == hash));
 }
 
-internal sealed class RecordingRunStore : IIngestionRunStore
+internal sealed class RecordingRunStore : IIngestionRunStore, IArchivedRunLookup
 {
     public List<IngestionRun> Recorded { get; } = [];
+
+    /// <summary>Every run holding this payload, oldest first - the archived-run lookup.</summary>
+    /// <remarks>
+    /// Ordered exactly as the EF implementation orders it, because a caller that refuses ambiguity
+    /// depends on the count and a caller that reports it depends on the sequence being stable.
+    /// </remarks>
+    public Task<IReadOnlyList<IngestionRun>> RunsForArchivedPayloadAsync(
+        ContentHash hash,
+        CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyList<IngestionRun>>(
+            Recorded
+                .Where(r => r.Artifacts.Contains(hash))
+                .OrderBy(r => r.StartedAtUtc)
+                .ThenBy(r => r.Id.Value)
+                .ToList());
 
     public Task RecordAsync(IngestionRun run, CancellationToken cancellationToken = default)
     {

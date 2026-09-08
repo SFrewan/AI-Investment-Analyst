@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Local archived-payload recovery. One member per run, one replay per run.
+
+    Separate from tools\replay-preflight on purpose. That tool is read-only by construction - it is
+    built with a write authorisation that refuses and a pipeline that throws - and it must stay that
+    way, so it can be re-run at any time without thinking. This one writes, and the difference
+    should be visible in the directory listing rather than in a flag.
+
+    Composed through the production AddApplication + AddInfrastructure, exactly as the API host does:
+    the seam, the policy engine, the audit sink, the idempotency store and the write authorisation
+    are all the real ones. Hand-wiring them would be a second, quieter safety posture.
+
+    Deliberately NOT in AI-Investment-Analyst.sln.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>AI.Investment.Tools.ReplayRecover</RootNamespace>
+    <AssemblyName>replay-recover</AssemblyName>
+    <IsPackable>false</IsPackable>
+
+    <!-- Relaxed for this tool only; the repository-wide settings are untouched. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AI.Investment.Infrastructure\AI.Investment.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

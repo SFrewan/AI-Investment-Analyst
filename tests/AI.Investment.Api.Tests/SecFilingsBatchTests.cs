@@ -306,21 +306,21 @@ public sealed class SecFilingsBatchTests : IClassFixture<UniverseApiFactory>
     /// </summary>
     /// <remarks>
     /// <para>
-    /// <strong>This fact has now been rebased three times, and every one is recorded here rather
-    /// than made quietly.</strong> It originally asserted that nothing had been charged - true when
-    /// it was written, and a statement about a moment rather than about an invariant. The QUMU
-    /// canary dispatched batch 1 and spent one unit, so it was rebased onto one. The LGIQ run spent
-    /// the second, so it was rebased onto two. The ONEM run spent the third, so it is rebased onto
-    /// three. Each time the assertion failed on the next run, correctly reporting the accounting it
-    /// was written to police.
+    /// <strong>This fact has been rebased six times, once per batch, and every one is recorded
+    /// here rather than made quietly.</strong> It originally asserted that nothing had been charged
+    /// - true when it was written, and a statement about a moment rather than about an invariant.
+    /// The QUMU canary spent the first unit, then LGIQ the second, ONEM the third, NGM the fourth,
+    /// SDC the fifth and SHPW the sixth, so it is rebased onto six. Each time the assertion failed
+    /// on the next run, correctly reporting the accounting it was written to police.
     /// </para>
     /// <para>
     /// <c>SplitBatchThreeReadinessTests</c> hit the same thing and records the same resolution: a
     /// fact that pins a next step stops holding when the step is taken, and rebasing it onto the
     /// state that now stands is a change of contract worth writing down. What is asserted now is the
-    /// accounting itself - three units spent, by three named attempts in the order they ran, leaving
-    /// three - which is checkable against the artefacts and will need deliberate rebasing again when
-    /// batch 4 is approved.
+    /// accounting itself - six units spent, by six named attempts in the order they ran, leaving
+    /// none - which is checkable against the artefacts. This is the last rebase: the ceiling is
+    /// reached, the partition is closed, and there is no further batch whose approval could move
+    /// the number again.
     /// </para>
     /// <para>
     /// The digest, ceiling, satisfied count and subject list are unchanged by any of it, and are
@@ -342,25 +342,27 @@ public sealed class SecFilingsBatchTests : IClassFixture<UniverseApiFactory>
             string.Join(",", Ciks),
             string.Join(",", authorization.Symbols.Order(StringComparer.Ordinal)));
 
-        // What has been charged, read from the artefacts rather than assumed. Three runs have gone.
+        // What has been charged, read from the artefacts rather than assumed. All six have gone.
         var spent = await SecFilingsBatchDoor.PriorConsumptionAsync(authorization.AuthorizationId);
 
-        Assert.Equal(3, spent);
+        Assert.Equal(6, spent);
 
-        // By exactly three attempts, named: batch 1 QUMU, batch 2 LGIQ, batch 3 ONEM. One unit each.
+        // By exactly six attempts, one per member, in partition order. One unit each.
         var burned = (await SecFilingsBatchDoor.BurnedCorrelationsAsync()).Order(StringComparer.Ordinal);
 
         Assert.Equal(
-            SecFilingsBatchRunner.CorrelationFor(1, 1, Ciks[0])
-            + "," + SecFilingsBatchRunner.CorrelationFor(2, 1, Ciks[1])
-            + "," + SecFilingsBatchRunner.CorrelationFor(3, 1, Ciks[2]),
+            string.Join(",", Enumerable.Range(1, 6).Select(i => SecFilingsBatchRunner.CorrelationFor(i, 1, Ciks[i - 1]))),
             string.Join(",", burned));
 
         // And charged through the production counter rather than asserted as arithmetic.
         authorization.RecordPriorConsumption(spent);
 
-        Assert.Equal(3, authorization.Consumed);
-        Assert.Equal(3, authorization.Remaining);
+        Assert.Equal(6, authorization.Consumed);
+        Assert.Equal(0, authorization.Remaining);
+
+        // The ceiling is reached, and no batch declares a prior consumption of six - so the
+        // ordering gate now refuses every one of them before the ceiling is even reached for.
+        Assert.DoesNotContain(SecEdgarSixMemberPartition.Batches, b => b.ExpectedPriorConsumption == spent);
     }
 
     // ================= 7, 8. the partition the door resolves =================

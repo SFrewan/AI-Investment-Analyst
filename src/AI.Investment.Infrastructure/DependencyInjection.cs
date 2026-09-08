@@ -251,11 +251,22 @@ public static class DependencyInjection
 
         services.AddScoped<ICompanyRepository, CompanyRepository>();
         services.AddScoped<ISourceRegistry, EfSourceRegistry>();
-        services.AddScoped<IIngestionRunStore, EfIngestionRunStore>();
+        // One instance answering two questions. IIngestionRunStore is the operational ledger;
+        // IArchivedRunLookup asks which run archived a given payload. Registered against the
+        // concrete type and forwarded, so a scope holds one store rather than two that would each
+        // track the same rows.
+        services.AddScoped<EfIngestionRunStore>();
+        services.AddScoped<IIngestionRunStore>(sp => sp.GetRequiredService<EfIngestionRunStore>());
+        services.AddScoped<IArchivedRunLookup>(sp => sp.GetRequiredService<EfIngestionRunStore>());
         services.AddScoped<IUnreplayableEvidenceStore, EfUnreplayableEvidenceStore>();
         services.AddScoped<IPayloadReferenceIndex, EfPayloadReferenceIndex>();
         services.AddScoped<IObservationStore, EfObservationStore>();
         services.AddScoped<IQuarantineStore, EfQuarantineStore>();
+
+        // Append-only evidence of what was asked of a provider and what came back. Separate from
+        // the archive because the archive is keyed by content and cannot describe 324 different
+        // requests that received the same two bytes.
+        services.AddScoped<IProviderExchangeStore, EfProviderExchangeStore>();
         services.AddScoped<IUnitOfWork, UnitOfWork>();
         services.AddScoped<IDatabaseConnectivityProbe, DatabaseConnectivityProbe>();
     }

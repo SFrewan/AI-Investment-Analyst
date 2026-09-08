@@ -65,28 +65,31 @@ internal static class SecEdgarSixMemberPartition
     /// <see cref="SecEdgarSixMemberInstallationTests"/> asserts it a second time from the other side.
     /// </para>
     /// <para>
-    /// <strong>Batches 1, 2 and 3 have run, one at a time.</strong> Batch 1 was approved for one
-    /// canary request - QUMU, CIK 0000892482 - then batch 2 for one request after it - LGIQ, CIK
-    /// 0001335112 - then batch 3 - ONEM, CIK 0001404123. Each was dispatched, each consumed one unit
-    /// of six, and each flag was returned to false as soon as its approval was spent. That is the
-    /// split partition's own convention, whose runner records it in the same words: every batch
-    /// there was returned to unauthorised once its approval had been used. Each approval window was
-    /// one filtered run long, and no two overlapped - each flag was already down before the next
-    /// went up.
+    /// <strong>All six batches have run, one at a time, and the authorisation is spent.</strong>
+    /// Batch 1 was approved for one canary request - QUMU, CIK 0000892482 - then batch 2 - LGIQ,
+    /// CIK 0001335112 - then batch 3 - ONEM, CIK 0001404123 - then batch 4 - NGM, CIK 0001426332 -
+    /// then batch 5 - SDC, CIK 0001775625 - then batch 6 - SHPW, CIK 0001784851. Each was
+    /// dispatched, each consumed one unit of six, and each flag was returned to false as soon as
+    /// its approval was spent. That is the split partition's own convention, whose runner records
+    /// it in the same words: every batch there was returned to unauthorised once its approval had
+    /// been used. Each approval window was one filtered run long, and no two overlapped - each flag
+    /// was already down before the next went up.
     /// </para>
     /// <para>
-    /// <strong>None of the three can run again, and not only because their flags are down.</strong>
+    /// <strong>None of the six can run again, and not only because their flags are down.</strong>
     /// The attempt artefacts they wrote are now the authorisation's spending record, so their
-    /// <c>ExpectedPriorConsumption</c> of 0, 1 and 2 no longer match the 3 that has been spent;
-    /// every one of their correlations is claimed; and the ledger holds a successful run for each of
+    /// <c>ExpectedPriorConsumption</c> of 0 to 5 no longer match the 6 that has been spent; every
+    /// one of their correlations is claimed; and the ledger holds a successful run for each of
     /// their request fingerprints. Any of the three checks refuses them, and none of them costs a
     /// unit.
     /// </para>
     /// <para>
-    /// Batches 4 to 6 have never been approved. Batch 4 now declares the prior consumption that
-    /// actually stands, which makes it the only batch the accounting would admit - and it is
-    /// admitted by nothing until somebody approves it deliberately. That ordering gate is not
-    /// decoration: it is what stops a batch being run out of turn on a mistyped identifier.
+    /// <strong>There is no seventh batch and no unit left to spend.</strong> Consumed is 6 of a
+    /// ceiling of 6, remaining is 0, and no batch in this partition declares a prior consumption of
+    /// 6 - so <c>runner.prior-consumption@1</c> now refuses every one of them, before the ceiling is
+    /// even reached for. The partition is closed. Acquiring anything further from this source needs
+    /// a new authorisation, reviewed and installed as this one was; it is not something a flag in
+    /// this file can reach.
     /// </para>
     /// </remarks>
     internal static readonly SecFilingBatchDefinition[] Batches =

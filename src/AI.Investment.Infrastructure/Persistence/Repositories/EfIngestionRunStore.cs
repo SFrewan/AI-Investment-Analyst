@@ -19,7 +19,7 @@ namespace AI.Investment.Infrastructure.Persistence.Repositories;
 /// cost an identity-map entry per row on queries that exist to be scanned.
 /// </para>
 /// </remarks>
-public sealed class EfIngestionRunStore : IIngestionRunStore
+public sealed class EfIngestionRunStore : IIngestionRunStore, IArchivedRunLookup
 {
     private readonly AppDbContext _dbContext;
 
@@ -147,5 +147,63 @@ public sealed class EfIngestionRunStore : IIngestionRunStore
             .Take(take)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Every run that recorded this payload among its artifacts, oldest first.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Two steps rather than one, and the split is deliberate. The <c>artifacts</c> column is a
+    /// <c>jsonb</c> array written through a value converter, so EF sees a
+    /// <c>List&lt;ContentHash&gt;</c> it cannot translate - the same reason
+    /// <see cref="EfPayloadReferenceIndex"/> reaches for raw SQL. The containment operator finds the
+    /// identities; EF then materialises the runs by key, which keeps owned-type mapping - request,
+    /// subject, window - entirely in EF's hands rather than in a hand-written projection that would
+    /// have to be revised every time the entity gains a column.
+    /// </para>
+    /// <para>
+    /// Ordering is applied in memory. The set is a handful of rows at most, and the keys are
+    /// value-converted, so sorting here is both cheap and certain to mean what it says rather than
+    /// depending on how a converted key translates to SQL.
+    /// </para>
+    /// </remarks>
+    public async Task<IReadOnlyList<IngestionRun>> RunsForArchivedPayloadAsync(
+        ContentHash hash,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(hash);
+
+        // A one-element JSON array is the containment probe: artifacts @> '["<hash>"]'.
+        // Interpolated into a FormattableString so EF parameterises it; the hash is already
+        // constrained to 64 hex characters, but a query built by concatenation is a habit worth
+        // not having.
+        var probe = $"[\"{hash.Value}\"]";
+
+        var identities = await _dbContext.Database
+            .SqlQuery<Guid>(
+                $"""
+                 SELECT id AS "Value" FROM ingestion_runs WHERE artifacts @> {probe}::jsonb
+                 """)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        if (identities.Count == 0)
+        {
+            return [];
+        }
+
+        var runIds = identities.Select(IngestionRunId.Create).ToList();
+
+        var runs = await _dbContext.IngestionRuns
+            .AsNoTracking()
+            .Where(r => runIds.Contains(r.Id))
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+        return runs
+            .OrderBy(r => r.StartedAtUtc)
+            .ThenBy(r => r.Id.Value)
+            .ToList();
     }
 }

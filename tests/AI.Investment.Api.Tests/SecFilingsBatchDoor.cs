@@ -191,10 +191,10 @@ internal static class SecFilingsBatchDoor
     /// <remarks>
     /// Scoped to the authorisation the artefact says it charged, exactly as the split runner scopes
     /// its own: an artefact naming a different authorisation belongs to a closed account, and one
-    /// that names none is refused rather than counted as zero. Three SEC artefacts now exist - batch
-    /// 1 (QUMU), batch 2 (LGIQ) and batch 3 (ONEM), one unit each - so this answers three, and it
-    /// answers three because it looked rather than because it assumed. It answered zero before any
-    /// of them had run, for the same reason.
+    /// that names none is refused rather than counted as zero. Six SEC artefacts now exist - one per
+    /// member, one unit each - so this answers six, the whole ceiling, and it answers six because it
+    /// looked rather than because it assumed. It answered zero before any of them had run, for the
+    /// same reason.
     /// </remarks>
     public static async Task<int> PriorConsumptionAsync(string authorizationId)
     {

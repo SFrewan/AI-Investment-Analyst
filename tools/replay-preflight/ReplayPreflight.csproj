@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    A standalone, read-only pre-recovery preflight.
+
+    It exists because the previous vehicle - a C# shim compiled in-process by Add-Type - was being
+    compiled by PowerShell 7's runtime, which on this machine is .NET 9, against production
+    assemblies built for .NET 8. That produced CS1701 (System.Runtime 8.0.0.0 vs 9.0.0.0) and no
+    number of extra references was going to fix a runtime-version mismatch. A net8.0 executable
+    removes the mismatch instead of arguing with it.
+
+    Deliberately NOT in AI-Investment-Analyst.sln. This is a diagnostic tool, not part of the
+    product, and adding it to the solution would put it in every build and every CI run.
+
+    ProjectReference rather than raw assembly references: it is the only way to guarantee the tool
+    binds to exactly the assemblies the product builds, which is the whole point of replacing the
+    shim.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>AI.Investment.Tools.ReplayPreflight</RootNamespace>
+    <AssemblyName>replay-preflight</AssemblyName>
+    <IsPackable>false</IsPackable>
+
+    <!--
+      Relaxed for this tool only, and only here. The repository treats warnings as errors so they
+      cannot accumulate silently in the product; a read-only diagnostic that never ships is not
+      where that discipline earns its keep, and a build failing on an analyzer suggestion would
+      stop a verification for a reason unrelated to what it verifies.
+    -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>false</EnableNETAnalyzers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\AI.Investment.Infrastructure\AI.Investment.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

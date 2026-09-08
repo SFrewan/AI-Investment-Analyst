@@ -633,6 +633,103 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                     b.ToTable("ingestion_runs", (string)null);
                 });
 
+            modelBuilder.Entity("AI.Investment.Domain.Ingestion.ProviderExchange", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("EndpointTemplate")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("character varying(300)")
+                        .HasColumnName("endpoint_template");
+
+                    b.Property<int>("ExchangeOrdinal")
+                        .HasColumnType("integer")
+                        .HasColumnName("exchange_ordinal");
+
+                    b.Property<int?>("HttpStatusCode")
+                        .HasColumnType("integer")
+                        .HasColumnName("http_status_code");
+
+                    b.Property<Guid>("IngestionRunId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("ingestion_run_id");
+
+                    b.Property<string>("ProviderCorrelationId")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("provider_correlation_id");
+
+                    b.Property<DateTime>("RecordedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("recorded_at_utc");
+
+                    b.Property<string>("RedactedRequestParameters")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("redacted_request_parameters");
+
+                    b.Property<string>("RequestFingerprint")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("request_fingerprint");
+
+                    b.Property<DateTime?>("RequestedFromUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("requested_from_utc");
+
+                    b.Property<DateTime?>("RequestedToUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("requested_to_utc");
+
+                    b.Property<int?>("ResponseByteLength")
+                        .HasColumnType("integer")
+                        .HasColumnName("response_byte_length");
+
+                    b.Property<string>("ResponseContentHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("response_content_hash");
+
+                    b.Property<DateTime>("RetrievedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("retrieved_at_utc");
+
+                    b.Property<string>("SelectedResponseHeaders")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("selected_response_headers");
+
+                    b.Property<string>("SourceId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("source_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("IngestionRunId")
+                        .HasDatabaseName("ix_provider_exchanges_ingestion_run_id");
+
+                    b.HasIndex("RequestFingerprint")
+                        .HasDatabaseName("ix_provider_exchanges_request_fingerprint");
+
+                    b.HasIndex("ResponseContentHash")
+                        .HasDatabaseName("ix_provider_exchanges_response_content_hash");
+
+                    b.HasIndex("RetrievedAtUtc")
+                        .HasDatabaseName("ix_provider_exchanges_retrieved_at_utc");
+
+                    b.HasIndex("IngestionRunId", "ExchangeOrdinal")
+                        .IsUnique()
+                        .HasDatabaseName("ux_provider_exchanges_run_ordinal");
+
+                    b.ToTable("provider_exchanges", (string)null);
+                });
+
             modelBuilder.Entity("AI.Investment.Domain.Normalization.QuarantinedPayload", b =>
                 {
                     b.Property<string>("Id")

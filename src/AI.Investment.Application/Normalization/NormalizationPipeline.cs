@@ -84,6 +84,7 @@ public sealed class NormalizationPipeline : INormalizationPipeline
         var normalizer = FindNormalizer(request.SourceId, request.Category);
         var observations = new List<Observation>();
         var quarantined = 0;
+        var rowsRejected = 0;
         var read = 0;
 
         foreach (var hash in run.Artifacts)
@@ -99,7 +100,12 @@ public sealed class NormalizationPipeline : INormalizationPipeline
                 continue;
             }
 
+            // A partially read payload counts as read, because it was: its observations are real
+            // and are recorded. The rows it refused are carried alongside rather than folded into
+            // the quarantine count, which keeps "quarantined" meaning what it has always meant -
+            // the payload could not be read at all - and stops a partial read from disappearing.
             read++;
+            rowsRejected += outcome.RejectedRows;
             observations.AddRange(outcome.Observations);
         }
 
@@ -107,7 +113,7 @@ public sealed class NormalizationPipeline : INormalizationPipeline
             ? 0
             : await RecordAsync(run, observations, cancellationToken).ConfigureAwait(false);
 
-        return new NormalizationSummary(read, recorded, quarantined);
+        return new NormalizationSummary(read, recorded, quarantined, rowsRejected);
     }
 
     private INormalizer? FindNormalizer(Domain.Sources.SourceId sourceId, DataCategory category)

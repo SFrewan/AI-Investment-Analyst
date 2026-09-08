@@ -107,6 +107,7 @@ public sealed class PostgresFixture : IAsyncLifetime
             "public"."position_events",
             "public"."processed_actions",
             "public"."promotion_warrants",
+            "public"."provider_exchanges",
             "public"."quarantined_payloads",
             "public"."shadow_decisions",
             "public"."unreplayable_evidence",

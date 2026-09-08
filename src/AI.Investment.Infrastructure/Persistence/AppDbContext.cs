@@ -93,6 +93,16 @@ public sealed class AppDbContext : DbContext
     /// <summary>Payloads that were archived but could not be turned into observations.</summary>
     public DbSet<QuarantinedPayload> QuarantinedPayloads => Set<QuarantinedPayload>();
 
+    /// <summary>
+    /// What was asked of a provider and what came back, one row per exchange. Append-only.
+    /// </summary>
+    /// <remarks>
+    /// Separate from the archive because the archive is keyed by content: the two-byte <c>[]</c>
+    /// payload answers 324 different requests, and a content-keyed sidecar can describe only the
+    /// first writer.
+    /// </remarks>
+    public DbSet<ProviderExchange> ProviderExchanges => Set<ProviderExchange>();
+
     /// <summary>Opportunities, from discovery through to a recorded outcome. Phase 5.</summary>
     public DbSet<Opportunity> Opportunities => Set<Opportunity>();
 
@@ -350,13 +360,35 @@ public sealed class AppDbContext : DbContext
     /// changes no domain state - it records a gap - so the exemption grants nothing beyond that.
     /// </para>
     /// <para>
+    /// <see cref="ProviderExchange"/> joins them, and the argument is the same one that already
+    /// admits <see cref="IngestionRun"/>. It is the record of what was asked of a vendor and what
+    /// came back: an append-only fact about an exchange that has already happened, carrying no
+    /// belief, no financial effect and no domain state. It is written by the same gateway, about
+    /// the same run, at the same moment - <c>IngestionGateway.RecordExchangesAsync</c> runs
+    /// immediately after the run is recorded, deliberately outside the effect so that a provenance
+    /// row can never point at a run nobody recorded. That timing is correct and is not what
+    /// changed; what was wrong is that a record which must be writable exactly there was not
+    /// classified as one of the records that may be.
+    /// <em>This was found by a live pilot, not by a test.</em> The run was recorded, the payload
+    /// was archived, and the provenance insert was refused with "Pending changes without an
+    /// authorised execution: ProviderExchange:Added" - so the platform kept the bytes and lost the
+    /// account of how it asked for them, which is the exact failure the record exists to prevent.
+    /// </para>
+    /// <para>
+    /// Listing it here narrows as much as it permits. The append-only rule above now refuses any
+    /// modification or deletion of a provenance row, inside an authorisation window or out, and the
+    /// single-path rule below still requires it to be written through
+    /// <c>EfProviderExchangeStore</c> rather than by a bare <c>SaveChangesAsync</c>. The exemption
+    /// is from needing a window to CREATE one; it is not permission to do anything else to one.
+    /// </para>
+    /// <para>
     /// <see cref="Observation"/> is deliberately <em>not</em> exempt. An observation is something
     /// the platform believes, and beliefs are precisely what the seam exists to audit.
     /// </para>
     /// </remarks>
     private static bool IsSeamBookkeeping(EntityEntry entry) =>
         entry.Entity is AuditRecord or ActionExecution or ProcessedAction or IngestionRun
-            or QuarantinedPayload ||
+            or QuarantinedPayload or ProviderExchange ||
         IsSeamBookkeepingType(RootOwnerType(entry));
 
     /// <summary>
@@ -389,7 +421,8 @@ public sealed class AppDbContext : DbContext
         type == typeof(ActionExecution) ||
         type == typeof(ProcessedAction) ||
         type == typeof(IngestionRun) ||
-        type == typeof(QuarantinedPayload);
+        type == typeof(QuarantinedPayload) ||
+        type == typeof(ProviderExchange);
 
     /// <summary>
     /// The platform's account of its own unattended running: creatable without a window, never

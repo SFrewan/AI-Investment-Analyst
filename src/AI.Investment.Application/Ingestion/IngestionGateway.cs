@@ -63,6 +63,7 @@ public sealed class IngestionGateway : IIngestionGateway
     private readonly IProviderRateLimiter _rateLimiter;
     private readonly IRawResponseArchive _archive;
     private readonly IIngestionRunStore _runStore;
+    private readonly IProviderExchangeStore? _exchangeStore;
     private readonly IActionGateway _actionGateway;
     private readonly IClock _clock;
 
@@ -73,7 +74,8 @@ public sealed class IngestionGateway : IIngestionGateway
         IRawResponseArchive archive,
         IIngestionRunStore runStore,
         IActionGateway actionGateway,
-        IClock clock)
+        IClock clock,
+        IProviderExchangeStore? exchangeStore = null)
     {
         _sources = sources ?? throw new ArgumentNullException(nameof(sources));
         _providers = providers ?? throw new ArgumentNullException(nameof(providers));
@@ -82,6 +84,12 @@ public sealed class IngestionGateway : IIngestionGateway
         _runStore = runStore ?? throw new ArgumentNullException(nameof(runStore));
         _actionGateway = actionGateway ?? throw new ArgumentNullException(nameof(actionGateway));
         _clock = clock ?? throw new ArgumentNullException(nameof(clock));
+
+        // Optional, and deliberately so. A composition that has not registered an exchange store
+        // behaves exactly as this gateway did before - it records no evidence, rather than being
+        // unable to acquire. Nothing downstream reads these rows, so their absence changes no
+        // outcome.
+        _exchangeStore = exchangeStore;
     }
 
     public async Task<IngestionRun> IngestAsync(
@@ -180,6 +188,20 @@ public sealed class IngestionGateway : IIngestionGateway
         // effect throws. The seam rethrows a failing effect after auditing it, by design.
         IngestionRun? started = null;
 
+        // Evidence for every exchange this run makes. Accumulated rather than written as it goes,
+        // because the run itself is not durable until after the effect returns and a provenance row
+        // pointing at a run nobody recorded would be evidence of nothing.
+        var exchanges = new List<ProviderExchange>();
+
+        // Set the instant the run reaches the ledger, and read by the catch filter below.
+        //
+        // An ingestion run has a primary key and the store inserts it. Recording one twice is not a
+        // retry, it is a duplicate-key failure - and because it happened inside a catch block it
+        // replaced the exception that got us there. A live pilot ended as
+        // "23505 duplicate key value violates unique constraint PK_ingestion_runs" when what had
+        // actually failed was the provenance write two lines earlier.
+        var runRecorded = false;
+
         try
         {
             var outcome = await _actionGateway.DispatchAsync(
@@ -189,7 +211,7 @@ public sealed class IngestionGateway : IIngestionGateway
                     var run = IngestionRun.Start(request, _clock.UtcNow);
                     started = run;
 
-                    await FetchAllAsync(provider, request, run, token).ConfigureAwait(false);
+                    await FetchAllAsync(provider, request, run, exchanges, token).ConfigureAwait(false);
 
                     return run;
                 },
@@ -198,6 +220,9 @@ public sealed class IngestionGateway : IIngestionGateway
             if (outcome.WasExecuted && outcome.Result is { } executed)
             {
                 await _runStore.RecordAsync(executed, cancellationToken).ConfigureAwait(false);
+                runRecorded = true;
+
+                await RecordExchangesAsync(exchanges, cancellationToken).ConfigureAwait(false);
 
                 return executed;
             }
@@ -212,26 +237,70 @@ public sealed class IngestionGateway : IIngestionGateway
                 $"{outcome.Status}: {outcome.Reason}",
                 cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex) when (started is not null)
+        catch (Exception ex) when (started is not null && !runRecorded)
         {
             // The seam has already audited the failure and rethrown. Record the run so the data
             // plane's own ledger agrees, then return it rather than propagating: a scheduler
             // ingesting fifty subjects must not lose forty-nine to one provider being down.
+            //
+            // `!runRecorded` in the FILTER, not an `if` in the body, and that is the whole fix.
+            // A failure after the run is already durable is a different situation with a different
+            // right answer: the ledger already agrees, there is nothing to record, and the only
+            // thing left to do with the exception is let it out. Filtering here means such a
+            // failure never enters this block at all - so it cannot insert a second run, cannot
+            // re-attempt a provenance write that has just failed, and reaches the caller with its
+            // own type, message and stack rather than with a duplicate-key error standing in front
+            // of it.
+            //
+            // The one case that reaches the caller as a throw is therefore precisely the one the
+            // provenance record exists for: the run happened and its evidence could not be written.
+            // Reporting that as success would be the platform quietly believing it holds evidence
+            // it does not hold.
             if (!started.IsComplete)
             {
                 started.MarkFailed(Describe(ex), _clock.UtcNow);
             }
 
             await _runStore.RecordAsync(started, CancellationToken.None).ConfigureAwait(false);
+            await RecordExchangesAsync(exchanges, CancellationToken.None).ConfigureAwait(false);
 
             return started;
         }
+    }
+
+    /// <summary>
+    /// Writes the run's evidence, once the run is durable.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Deliberately NOT wrapped in a catch. If the evidence cannot be written the caller is told,
+    /// because the failure mode this whole record exists to prevent is a platform that quietly
+    /// believes it has evidence it does not have. The run is already recorded by the time this runs,
+    /// so a throw here leaves no partially-written acquisition state behind.
+    /// </para>
+    /// <para>
+    /// It cannot change whether a payload is Normalized, Partial or Quarantined: that is decided in
+    /// <c>NormalizationPipeline</c>, downstream, from the archived bytes, and nothing on that path
+    /// reads these rows.
+    /// </para>
+    /// </remarks>
+    private async Task RecordExchangesAsync(
+        List<ProviderExchange> exchanges,
+        CancellationToken cancellationToken)
+    {
+        if (_exchangeStore is null || exchanges.Count == 0)
+        {
+            return;
+        }
+
+        await _exchangeStore.RecordAsync(exchanges, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task FetchAllAsync(
         IDataProvider provider,
         IngestionRequest request,
         IngestionRun run,
+        List<ProviderExchange> exchanges,
         CancellationToken cancellationToken)
     {
         string? continuationToken = null;
@@ -252,6 +321,32 @@ public sealed class IngestionGateway : IIngestionGateway
                 .ConfigureAwait(false);
 
             run.RecordArtifact(hash);
+
+            // One row per exchange. `pages` is the ordinal, so a paged run produces several rows
+            // sharing one IngestionRunId, each with its own status, bytes and retrieval time.
+            //
+            // Note this does not depend on whether StoreAsync actually wrote anything: it returns
+            // the same hash for bytes it already held, and an exchange that received a payload the
+            // archive had seen before is still an exchange that happened.
+            if (response.Provenance is { } provenance)
+            {
+                exchanges.Add(ProviderExchange.Record(
+                    run.Id,
+                    pages,
+                    request.SourceId,
+                    request.Fingerprint(),
+                    provenance.EndpointTemplate,
+                    provenance.ParametersAsJson(),
+                    provenance.RequestedFromUtc,
+                    provenance.RequestedToUtc,
+                    provenance.HttpStatusCode,
+                    provenance.HeadersAsJson(),
+                    response.RetrievedAtUtc,
+                    hash.Value,
+                    response.Payload.Length,
+                    provenance.ProviderCorrelationId,
+                    _clock.UtcNow));
+            }
 
             continuationToken = response.ContinuationToken;
             pages++;

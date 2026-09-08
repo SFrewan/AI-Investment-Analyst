@@ -19,6 +19,23 @@ REM  exported as Database__ConnectionString for this process only. Scaffolding a
 REM  migration needs a well-formed connection string rather than a reachable
 REM  server: nothing here connects to anything.
 REM
+REM  WHICH DATABASE. This script used to prefer AIINV_DESIGNTIME_DB and fall back
+REM  to AIINV_TEST_POSTGRES. On this machine AIINV_DESIGNTIME_DB names
+REM  ai_investment - the database holding the platform's observation evidence - so
+REM  the evidence database was the DEFAULT for a family of scripts whose siblings
+REM  do connect. Scaffolding never connected, so nothing was harmed; a default
+REM  nobody chose is still the shape a later accident takes.
+REM
+REM  The choice now lives in scripts\Resolve-ScaffoldTarget.ps1, is the same for
+REM  every scaffolding script here, and is printed before the tool runs:
+REM
+REM    * AIINV_TEST_POSTGRES is the default and the only default.
+REM    * AIINV_DESIGNTIME_DB is used only when AIINV_SCAFFOLD_TARGET=designtime.
+REM      There is no silent fallback in either direction.
+REM    * A connection naming ai_investment is refused - whichever variable carried
+REM      it - unless AIINV_SCAFFOLD_ALLOW_EVIDENCE_DB carries the exact opt-in
+REM      token the resolver documents.
+REM
 REM  CONFIGURATION. Release, deliberately. The EF tool builds Debug by default, and a locally
 REM  running API holds its own Debug output open - so scaffolding a migration while the application
 REM  is running failed with a file-copy error that said nothing about migrations. Release is the
@@ -44,14 +61,38 @@ if not exist ".config\dotnet-tools.json" (
 dotnet tool restore >> "artifacts\verify\migration.log" 2>&1
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$local = Join-Path (Join-Path (Get-Location) 'scripts') 'verify.local.ps1';" ^
+  "$scripts = Join-Path (Get-Location) 'scripts';" ^
+  "$local = Join-Path $scripts 'verify.local.ps1';" ^
   "if (Test-Path -Path $local) { . $local };" ^
-  "$cs = $env:AIINV_DESIGNTIME_DB; if ([string]::IsNullOrWhiteSpace($cs)) { $cs = $env:AIINV_TEST_POSTGRES };" ^
-  "if ([string]::IsNullOrWhiteSpace($cs)) { Write-Host '[migration] no local connection string; set AIINV_DESIGNTIME_DB or create scripts\verify.local.ps1'; exit 2 };" ^
-  "$env:Database__ConnectionString = $cs;" ^
+  ". (Join-Path $scripts 'Resolve-ScaffoldTarget.ps1');" ^
+  "$t = Resolve-ScaffoldTarget;" ^
+  "Set-Content -Path 'artifacts\verify\scaffold-target.txt' -Value $t.Report -Encoding UTF8;" ^
+  "Write-Host $t.Report;" ^
+  "if (-not $t.Allowed) { Write-Host '[migration] REFUSED - nothing was scaffolded.'; exit $t.ExitCode };" ^
+  "$env:Database__ConnectionString = $t.ConnectionString;" ^
   "dotnet ef migrations add %MIGRATION_NAME% --project src\AI.Investment.Infrastructure --startup-project src\AI.Investment.Api --context AppDbContext --output-dir Persistence\Migrations --configuration Release;" ^
   "exit $LASTEXITCODE" >> "artifacts\verify\migration.log" 2>&1
 
->> "artifacts\verify\migration.log" echo [migration] finished exit=%ERRORLEVEL% %DATE% %TIME%
-> "artifacts\verify\MIGRATION-DONE.txt" echo exit=%ERRORLEVEL%
+REM Captured immediately. %ERRORLEVEL% expands when the line is parsed, and the echo
+REM on the next line succeeds - so reading it twice used to report the echo's result
+REM rather than the tool's, which would have hidden a refusal behind exit=0.
+set EXITCODE=%ERRORLEVEL%
+
+>> "artifacts\verify\migration.log" echo [migration] finished exit=%EXITCODE% %DATE% %TIME%
+> "artifacts\verify\MIGRATION-DONE.txt" echo exit=%EXITCODE%
+
+echo.
+if exist "artifacts\verify\scaffold-target.txt" type "artifacts\verify\scaffold-target.txt"
+echo.
+echo Migration scaffolding exit code: %EXITCODE%
+echo Log: artifacts\verify\migration.log
+if not "%EXITCODE%"=="0" (
+  echo.
+  echo REFUSED or FAILED. What the codes mean:
+  echo    2 = no connection string is set for the requested target
+  echo    4 = refused - that is the evidence database and no opt-in was supplied
+  echo    5 = the connection string does not name a database
+  echo    6 = AIINV_SCAFFOLD_TARGET is neither 'test' nor 'designtime'
+)
+echo.
 endlocal
