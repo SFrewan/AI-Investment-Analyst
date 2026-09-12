@@ -5,6 +5,7 @@ using AI.Investment.Domain.Auditing;
 using AI.Investment.Domain.Autonomy;
 using AI.Investment.Domain.Capital;
 using AI.Investment.Domain.Companies;
+using AI.Investment.Domain.Evidence;
 using AI.Investment.Domain.Ingestion;
 using AI.Investment.Domain.Normalization;
 using AI.Investment.Domain.Observations;
@@ -12,8 +13,10 @@ using AI.Investment.Domain.Operations;
 using AI.Investment.Domain.Opportunities;
 using AI.Investment.Domain.Portfolio;
 using AI.Investment.Domain.Retention;
+using AI.Investment.Domain.Securities;
 using AI.Investment.Domain.Shadow;
 using AI.Investment.Domain.Sources;
+using AI.Investment.Domain.Universe;
 using AI.Investment.Domain.Watching;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
@@ -102,6 +105,41 @@ public sealed class AppDbContext : DbContext
     /// first writer.
     /// </remarks>
     public DbSet<ProviderExchange> ProviderExchanges => Set<ProviderExchange>();
+
+    /// <summary>Tradable instruments, identified by a surrogate and never by a symbol. Stage D.</summary>
+    public DbSet<Security> Securities => Set<Security>();
+
+    /// <summary>Trading venues as reference data, each scoped to the interval it is true for. Stage D.</summary>
+    public DbSet<Venue> Venues => Set<Venue>();
+
+    /// <summary>
+    /// The (security, venue) pairings. Carries no status: what a listing did is in its events.
+    /// Stage D.
+    /// </summary>
+    public DbSet<Listing> Listings => Set<Listing>();
+
+    /// <summary>
+    /// Listing transitions, append-only and always venue-qualified. The temporal core of the
+    /// reference model. Stage D.
+    /// </summary>
+    public DbSet<ListingEvent> ListingEvents => Set<ListingEvent>();
+
+    /// <summary>
+    /// Sealed universe versions. One row per seal, identified by its content fingerprint. Stage D.
+    /// </summary>
+    public DbSet<Universe> Universes => Set<Universe>();
+
+    /// <summary>
+    /// Which securities were in which sealed universe version, and at which cohort cuts. The span
+    /// is derived on read and is deliberately not stored. Stage D.
+    /// </summary>
+    public DbSet<UniverseMembership> UniverseMemberships => Set<UniverseMembership>();
+
+    /// <summary>
+    /// Derived values, recorded so they can be reproduced rather than trusted. The sibling to
+    /// <see cref="Observations"/>, and the only place a non-Fact claim may live. Stage E.
+    /// </summary>
+    public DbSet<Determination> Determinations => Set<Determination>();
 
     /// <summary>Opportunities, from discovery through to a recorded outcome. Phase 5.</summary>
     public DbSet<Opportunity> Opportunities => Set<Opportunity>();
@@ -306,6 +344,58 @@ public sealed class AppDbContext : DbContext
                 $"only account anybody has of it. Attempted: {string.Join(", ", erasedPrivileges)}.");
         }
 
+        // FIFTH, and for the same reason as the position events above. A listing event is the record
+        // of what one venue said about one security on one date, and the point-in-time state of a
+        // listing is replayed from nothing else. Editing one would rewrite what was knowable on a
+        // past date, which is the single failure the reference model was built to remove -
+        // Company.ChangeListing overwrites the current ticker and exchange, and that is precisely
+        // why no historical question can be answered from it.
+        //
+        // Like a position event and unlike the seam's own bookkeeping, it is NOT exempt from needing
+        // an authorisation to be created: reference data is a domain write, and the guard below is
+        // the right place for it to be refused. Stage D.
+        var rewrittenReferenceData = ChangeTracker
+            .Entries()
+            .Where(e => e.State is EntityState.Modified or EntityState.Deleted)
+            .Where(IsReferenceDataRecord)
+            .Select(Describe)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (rewrittenReferenceData.Count > 0)
+        {
+            throw new UnauthorizedWriteException(
+                "Listing events, sealed universes and their memberships are append-only: a past " +
+                "date's listing status and a past version's population are replayed from them, so " +
+                "modifying or deleting one rewrites what was knowable then. " +
+                $"Attempted: {string.Join(", ", rewrittenReferenceData)}.");
+        }
+
+        // SIXTH. A determination is the record of what a named, versioned rule concluded from a named
+        // set of inputs at a stated instant. Editing one would change the platform's own past
+        // conclusion while leaving the rule, the version and the input hashes saying it had concluded
+        // something else - which is an unreproducible claim wearing the clothes of evidence. A
+        // correction is a new row under a new rule version, never an edit.
+        //
+        // Like a position event and a listing event, and unlike the seam's own bookkeeping, it is NOT
+        // exempt from needing an authorisation to be created. Stage E.
+        var rewrittenDeterminations = ChangeTracker
+            .Entries()
+            .Where(e => e.State is EntityState.Modified or EntityState.Deleted)
+            .Where(IsDeterminationRecord)
+            .Select(Describe)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (rewrittenDeterminations.Count > 0)
+        {
+            throw new UnauthorizedWriteException(
+                "Determinations are append-only: a determination is reproducible from its rule, its " +
+                "version, its as-of instant and its input hashes, so editing one makes the record " +
+                "disagree with what it says it computed. " +
+                $"Attempted: {string.Join(", ", rewrittenDeterminations)}.");
+        }
+
         if (_writeAuthorization.IsAuthorized)
         {
             return;
@@ -462,6 +552,54 @@ public sealed class AppDbContext : DbContext
     /// <summary>A position event, or one of its owned money values.</summary>
     private static bool IsPositionRecord(EntityEntry entry) =>
         entry.Entity is PositionEvent || RootOwnerType(entry) == typeof(PositionEvent);
+
+    /// <summary>
+    /// The append-only records of the reference model: what a venue said, and when.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="Security"/>, <see cref="Venue"/> and <see cref="Listing"/> are deliberately not
+    /// here. A security's issuer and a listing's pairing are fixed at creation and the domain
+    /// exposes no operation that changes them, so there is nothing for a database-level refusal to
+    /// add; a venue is slowly-changing reference data whose corrections are legitimate. The parts
+    /// that must never be rewritten are the ones named.
+    /// </para>
+    /// <para>
+    /// <strong><see cref="SecurityIdentifier"/> joined them at G2</strong>, for the same reason a
+    /// listing event is here and its listing is not: an identifier assertion records what a source
+    /// said and over which interval, and rewriting one would change what the platform believes was
+    /// claimed. <c>Security.AssertIdentifier</c> is already append-only by construction - there is
+    /// no operation that edits or removes an assertion - and this is the second mechanism, because
+    /// the first can be bypassed by a caller holding a tracked entity.
+    /// </para>
+    /// <para>
+    /// A <see cref="Universe"/> and its memberships are here for the same reason a listing event is:
+    /// a sealed version is what a backtest cites, and its identity is a digest of its own content, so
+    /// an edit would leave a row whose fingerprint no longer describes it. Re-sealing is a new row,
+    /// never an update.
+    /// </para>
+    /// </remarks>
+    private static bool IsReferenceDataRecord(EntityEntry entry) =>
+        entry.Entity is ListingEvent or Universe or UniverseMembership or SecurityIdentifier ||
+        IsReferenceDataType(RootOwnerType(entry));
+
+    /// <summary>
+    /// The append-only record of what a rule concluded. Stage E.
+    /// </summary>
+    /// <remarks>
+    /// Its own category rather than reference data, because it is neither: a determination is not a
+    /// fact about the world and not a slowly-changing reference row. It is the platform's own
+    /// conclusion, and the reason it must never be edited differs in kind from the reason a listing
+    /// event must not be - a listing event records what somebody said, and this records what the
+    /// platform worked out.
+    /// </remarks>
+    private static bool IsDeterminationRecord(EntityEntry entry) =>
+        entry.Entity is Determination || RootOwnerType(entry) == typeof(Determination);
+
+    private static bool IsReferenceDataType(Type? rootOwner) =>
+        rootOwner == typeof(ListingEvent)
+        || rootOwner == typeof(Universe)
+        || rootOwner == typeof(UniverseMembership);
 
     private static bool IsOperationsType(Type? type) =>
         type == typeof(OperatingCycle) ||

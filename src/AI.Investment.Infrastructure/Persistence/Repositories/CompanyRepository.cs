@@ -21,22 +21,13 @@ public sealed class CompanyRepository : ICompanyRepository
             .FirstOrDefaultAsync(c => c.Id == id, cancellationToken)
             .ConfigureAwait(false);
 
-    public async Task<Company?> GetByTickerAsync(Ticker ticker, CancellationToken cancellationToken = default)
+    public async Task<Company?> FindByCikAsync(Cik cik, CancellationToken cancellationToken = default)
     {
-        ArgumentNullException.ThrowIfNull(ticker);
+        ArgumentNullException.ThrowIfNull(cik);
 
         return await _dbContext.Companies
             .AsNoTracking()
-            .FirstOrDefaultAsync(c => c.Ticker == ticker, cancellationToken)
-            .ConfigureAwait(false);
-    }
-
-    public async Task<bool> ExistsWithTickerAsync(Ticker ticker, CancellationToken cancellationToken = default)
-    {
-        ArgumentNullException.ThrowIfNull(ticker);
-
-        return await _dbContext.Companies
-            .AnyAsync(c => c.Ticker == ticker, cancellationToken)
+            .FirstOrDefaultAsync(c => c.Cik == cik, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -91,12 +82,6 @@ public sealed class CompanyRepository : ICompanyRepository
 
         var trimmed = query.Trim();
         var pattern = $"%{trimmed}%";
-
-        if (Ticker.TryCreate(trimmed, out var ticker) && ticker is not null)
-        {
-            return companies.Where(c =>
-                EF.Functions.ILike(c.Name, pattern) || c.Ticker == ticker);
-        }
 
         return companies.Where(c => EF.Functions.ILike(c.Name, pattern));
     }

@@ -521,6 +521,11 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("Cik")
+                        .HasMaxLength(10)
+                        .HasColumnType("character varying(10)")
+                        .HasColumnName("cik");
+
                     b.Property<string>("Country")
                         .HasMaxLength(100)
                         .HasColumnType("character varying(100)")
@@ -534,11 +539,6 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                         .HasMaxLength(4000)
                         .HasColumnType("character varying(4000)")
                         .HasColumnName("description");
-
-                    b.Property<string>("Exchange")
-                        .HasMaxLength(12)
-                        .HasColumnType("character varying(12)")
-                        .HasColumnName("exchange");
 
                     b.Property<string>("Industry")
                         .HasMaxLength(100)
@@ -556,26 +556,95 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                         .HasColumnType("character varying(100)")
                         .HasColumnName("sector");
 
-                    b.Property<string>("Ticker")
-                        .IsRequired()
-                        .HasMaxLength(12)
-                        .HasColumnType("character varying(12)")
-                        .HasColumnName("ticker");
-
                     b.Property<DateTime>("UpdatedAtUtc")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("updated_at_utc");
 
                     b.HasKey("Id");
 
+                    b.HasIndex("Cik")
+                        .IsUnique()
+                        .HasDatabaseName("ix_companies_cik")
+                        .HasFilter("cik IS NOT NULL");
+
                     b.HasIndex("Name")
                         .HasDatabaseName("ix_companies_name");
 
-                    b.HasIndex("Ticker")
-                        .IsUnique()
-                        .HasDatabaseName("ix_companies_ticker");
-
                     b.ToTable("companies", (string)null);
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Evidence.Determination", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("AsOfUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("as_of_utc");
+
+                    b.Property<decimal?>("Confidence")
+                        .HasColumnType("numeric")
+                        .HasColumnName("confidence");
+
+                    b.Property<string>("InputsHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("inputs_hash");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("kind");
+
+                    b.Property<string>("OutputCanonical")
+                        .IsRequired()
+                        .HasMaxLength(8000)
+                        .HasColumnType("character varying(8000)")
+                        .HasColumnName("output_canonical");
+
+                    b.Property<string>("OutputContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("output_content_hash");
+
+                    b.Property<DateTime>("RecordedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("recorded_at_utc");
+
+                    b.Property<string>("RuleId")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("character varying(120)")
+                        .HasColumnName("rule_id");
+
+                    b.Property<string>("RuleVersion")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)")
+                        .HasColumnName("rule_version");
+
+                    b.Property<string>("_inputs")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("inputs");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("AsOfUtc")
+                        .HasDatabaseName("ix_determinations_as_of_utc");
+
+                    b.HasIndex("RuleId")
+                        .HasDatabaseName("ix_determinations_rule_id");
+
+                    b.HasIndex("RuleId", "RuleVersion", "AsOfUtc", "InputsHash")
+                        .IsUnique()
+                        .HasDatabaseName("ix_determinations_reproducibility");
+
+                    b.ToTable("determinations", (string)null);
                 });
 
             modelBuilder.Entity("AI.Investment.Domain.Ingestion.IngestionRun", b =>
@@ -1162,6 +1231,151 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                     b.ToTable("unreplayable_evidence", (string)null);
                 });
 
+            modelBuilder.Entity("AI.Investment.Domain.Securities.Listing", b =>
+                {
+                    b.Property<Guid>("SecurityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("security_id");
+
+                    b.Property<string>("VenueId")
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)")
+                        .HasColumnName("venue_id");
+
+                    b.Property<DateTime>("OpenedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("opened_at_utc");
+
+                    b.HasKey("SecurityId", "VenueId");
+
+                    b.HasIndex("VenueId")
+                        .HasDatabaseName("ix_listings_venue_id");
+
+                    b.ToTable("listings", (string)null);
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Securities.ListingEvent", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateOnly>("EffectiveDate")
+                        .HasColumnType("date")
+                        .HasColumnName("effective_date");
+
+                    b.Property<string>("EvidenceContentHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("evidence_content_hash");
+
+                    b.Property<DateTime>("PublishedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("published_at_utc");
+
+                    b.Property<string>("ReasonCode")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("reason_code");
+
+                    b.Property<DateTime>("RecordedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("recorded_at_utc");
+
+                    b.Property<Guid>("SecurityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("security_id");
+
+                    b.Property<string>("SourceId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("source_id");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasColumnName("status");
+
+                    b.Property<string>("VenueId")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)")
+                        .HasColumnName("venue_id");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PublishedAtUtc")
+                        .HasDatabaseName("ix_listing_events_published_at_utc");
+
+                    b.HasIndex("SecurityId", "VenueId", "EffectiveDate")
+                        .HasDatabaseName("ix_listing_events_pairing_effective");
+
+                    b.ToTable("listing_events", (string)null);
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Securities.Security", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<Guid>("CompanyId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("company_id");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("created_at_utc");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CompanyId")
+                        .HasDatabaseName("ix_securities_company_id");
+
+                    b.ToTable("securities", (string)null);
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Securities.Venue", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CountryCode")
+                        .HasMaxLength(2)
+                        .HasColumnType("character varying(2)")
+                        .HasColumnName("country_code");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("name");
+
+                    b.Property<DateTime>("RecordedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("recorded_at_utc");
+
+                    b.Property<DateOnly>("ValidFrom")
+                        .HasColumnType("date")
+                        .HasColumnName("valid_from");
+
+                    b.Property<DateOnly?>("ValidTo")
+                        .HasColumnType("date")
+                        .HasColumnName("valid_to");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .HasDatabaseName("ix_venues_name");
+
+                    b.ToTable("venues", (string)null);
+                });
+
             modelBuilder.Entity("AI.Investment.Domain.Shadow.ShadowDecision", b =>
                 {
                     b.Property<Guid>("ShadowDecisionId")
@@ -1304,6 +1518,97 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                         .HasDatabaseName("ix_data_sources_region");
 
                     b.ToTable("data_sources", (string)null);
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Universe.Universe", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("id");
+
+                    b.Property<string>("ManifestContentHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("manifest_content_hash");
+
+                    b.Property<string>("MembershipRule")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("membership_rule");
+
+                    b.Property<string>("PopulationDefinition")
+                        .IsRequired()
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)")
+                        .HasColumnName("population_definition");
+
+                    b.Property<DateTime>("RecordedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("recorded_at_utc");
+
+                    b.Property<DateTime>("SealedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("sealed_at_utc");
+
+                    b.Property<DateOnly>("WindowFrom")
+                        .HasColumnType("date")
+                        .HasColumnName("window_from");
+
+                    b.Property<DateOnly>("WindowTo")
+                        .HasColumnType("date")
+                        .HasColumnName("window_to");
+
+                    b.Property<string>("_cohortCutDates")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("cohort_cut_dates");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SealedAtUtc")
+                        .HasDatabaseName("ix_universes_sealed_at_utc");
+
+                    b.ToTable("universes", (string)null);
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Universe.UniverseMembership", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<DateTime>("RecordedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("recorded_at_utc");
+
+                    b.Property<Guid>("SecurityId")
+                        .HasColumnType("uuid")
+                        .HasColumnName("security_id");
+
+                    b.Property<string>("UniverseId")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)")
+                        .HasColumnName("universe_id");
+
+                    b.Property<string>("_cohortCuts")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("cohort_cuts");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("SecurityId")
+                        .HasDatabaseName("ix_universe_memberships_security_id");
+
+                    b.HasIndex("UniverseId", "SecurityId")
+                        .IsUnique()
+                        .HasDatabaseName("ix_universe_memberships_universe_security");
+
+                    b.ToTable("universe_memberships", (string)null);
                 });
 
             modelBuilder.Entity("AI.Investment.Domain.Watching.Watch", b =>
@@ -2111,6 +2416,89 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("AI.Investment.Domain.Securities.Listing", b =>
+                {
+                    b.HasOne("AI.Investment.Domain.Securities.Security", null)
+                        .WithMany()
+                        .HasForeignKey("SecurityId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("AI.Investment.Domain.Securities.Venue", null)
+                        .WithMany()
+                        .HasForeignKey("VenueId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Securities.ListingEvent", b =>
+                {
+                    b.HasOne("AI.Investment.Domain.Securities.Listing", null)
+                        .WithMany("Events")
+                        .HasForeignKey("SecurityId", "VenueId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Securities.Security", b =>
+                {
+                    b.HasOne("AI.Investment.Domain.Companies.Company", null)
+                        .WithMany()
+                        .HasForeignKey("CompanyId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.OwnsMany("AI.Investment.Domain.Securities.SecurityIdentifier", "Identifiers", b1 =>
+                        {
+                            b1.Property<Guid>("id")
+                                .HasColumnType("uuid")
+                                .HasColumnName("id");
+
+                            b1.Property<int>("Kind")
+                                .HasColumnType("integer")
+                                .HasColumnName("kind");
+
+                            b1.Property<string>("SourceId")
+                                .IsRequired()
+                                .HasMaxLength(64)
+                                .HasColumnType("character varying(64)")
+                                .HasColumnName("source_id");
+
+                            b1.Property<DateOnly>("ValidFrom")
+                                .HasColumnType("date")
+                                .HasColumnName("valid_from");
+
+                            b1.Property<DateOnly?>("ValidTo")
+                                .HasColumnType("date")
+                                .HasColumnName("valid_to");
+
+                            b1.Property<string>("Value")
+                                .IsRequired()
+                                .HasMaxLength(64)
+                                .HasColumnType("character varying(64)")
+                                .HasColumnName("value");
+
+                            b1.Property<Guid>("security_id")
+                                .HasColumnType("uuid");
+
+                            b1.HasKey("id");
+
+                            b1.HasIndex("security_id")
+                                .HasDatabaseName("ix_security_identifiers_security_id");
+
+                            b1.HasIndex("Kind", "Value")
+                                .IsUnique()
+                                .HasDatabaseName("ux_security_identifiers_kind_value");
+
+                            b1.ToTable("security_identifiers", (string)null);
+
+                            b1.WithOwner()
+                                .HasForeignKey("security_id");
+                        });
+
+                    b.Navigation("Identifiers");
+                });
+
             modelBuilder.Entity("AI.Investment.Domain.Shadow.ShadowDecision", b =>
                 {
                     b.OwnsOne("AI.Investment.Domain.ValueObjects.Money", "Exposure", b1 =>
@@ -2237,6 +2625,21 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("AI.Investment.Domain.Universe.UniverseMembership", b =>
+                {
+                    b.HasOne("AI.Investment.Domain.Securities.Security", null)
+                        .WithMany()
+                        .HasForeignKey("SecurityId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("AI.Investment.Domain.Universe.Universe", null)
+                        .WithMany()
+                        .HasForeignKey("UniverseId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("AI.Investment.Domain.Watching.Watch", b =>
                 {
                     b.OwnsOne("AI.Investment.Domain.Watching.TriggerCondition", "Condition", b1 =>
@@ -2296,6 +2699,11 @@ namespace AI.Investment.Infrastructure.Persistence.Migrations
 
                     b.Navigation("Target")
                         .IsRequired();
+                });
+
+            modelBuilder.Entity("AI.Investment.Domain.Securities.Listing", b =>
+                {
+                    b.Navigation("Events");
                 });
 #pragma warning restore 612, 618
         }

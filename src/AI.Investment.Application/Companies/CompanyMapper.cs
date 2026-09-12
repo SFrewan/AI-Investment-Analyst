@@ -18,8 +18,6 @@ public static class CompanyMapper
         return new CompanyDto(
             company.Id.Value,
             company.Name,
-            company.Ticker.Value,
-            company.Exchange?.Code,
             company.Sector,
             company.Industry,
             company.Country,

@@ -56,6 +56,25 @@ public enum DataCategory
     /// </remarks>
     MarketWideDisclosure = 18,
 
+    /// <summary>
+    /// The bytes of one filing document, as filed - not the metadata describing it.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <strong>Deliberately separate from <see cref="RegulatoryFilings"/>.</strong> That category
+    /// serves the submissions index: accession numbers, forms, dates, and the name of each primary
+    /// document. It names documents; it is not the documents. A filing pointer says a document
+    /// exists and what it is called, and says nothing about what the issuer wrote in it.
+    /// </para>
+    /// <para>
+    /// The distinction matters because the identity question turns on it. 2,913 pointers are held
+    /// and none states what a security traded as; the cover pages they name might, and only reading
+    /// them can settle it. Separating the categories means a source may be licensed and admitted
+    /// for the index without being admitted for the documents.
+    /// </para>
+    /// </remarks>
+    RegulatoryFilingDocuments = 19,
+
     // --- Future opportunity domains. Declared so the taxonomy is stable, NOT implemented.
     ProductCatalogue = 13,
     MarketplaceListings = 14,

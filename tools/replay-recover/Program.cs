@@ -722,7 +722,7 @@ internal static class Program
     /// </summary>
     private static int ReadInteriorGapTolerance(string root)
     {
-        var path = Path.Combine(root, "tests", "AI.Investment.Api.Tests", "CoverageEvaluation.cs");
+        var path = Path.Combine(root, "src", "AI.Investment.Domain", "Coverage", "CoverageEvaluation.cs");
 
         if (!File.Exists(path)) { return 4; }
 

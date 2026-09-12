@@ -65,19 +65,9 @@ public sealed class CreateCompanyHandler
             throw new ValidationFailedException(errors);
         }
 
-        // Value objects do the real validation and throw DomainValidationException for a bad
-        // shape. The application layer above deliberately does not duplicate those rules.
-        var ticker = Ticker.Create(command.Ticker);
-        var exchange = string.IsNullOrWhiteSpace(command.Exchange) ? null : Exchange.Create(command.Exchange);
-
-        if (await _companies.ExistsWithTickerAsync(ticker, cancellationToken).ConfigureAwait(false))
-        {
-            return new CreateCompanyResult(
-                CreateCompanyStatus.AlreadyExists,
-                Company: null,
-                $"A company with ticker '{ticker}' already exists.",
-                DecisionId: null);
-        }
+        // The duplicate pre-check went with the ticker it was keyed on. Names are not unique and
+        // never were, so re-keying that check onto one would assert something false. Idempotency
+        // below is what actually stops a retried request creating a second row.
 
         var now = _clock.UtcNow;
         var companyId = CompanyId.New();
@@ -87,7 +77,7 @@ public sealed class CreateCompanyHandler
             Capability.ReferenceDataManagement,
             ActionType.Create("company.create"),
             ActionTarget.Create("Company"),
-            new CreateCompanyParameters(command.Name, ticker.Value, exchange?.Code),
+            new CreateCompanyParameters(command.Name),
 
             // Adding a reference-data row spends nothing, risks nothing and can be undone.
             // Risk tier is computed from this by RiskTierCalculator - it is not asserted here,
@@ -96,11 +86,11 @@ public sealed class CreateCompanyHandler
 
             ProposedBy.Service(ServiceId, ServiceVersion),
 
-            // Keyed on the ticker, so a retried request does not create a second row. The
-            // consequence, accepted for Phase 1: once a ticker has been created it cannot be
-            // created again through this path even after deletion. Reference data has no
-            // deletion yet, and a key scoped to a retry window is the Phase 2 refinement.
-            idempotencyKey: $"company.create:{ticker.Value}",
+            // Keyed on the name now that the ticker has moved to the security. The property that
+            // matters is unchanged - a retried request does not create a second row - and the
+            // Phase 1 consequence is unchanged with it: a name created once cannot be created
+            // again through this path, and a key scoped to a retry window is the later refinement.
+            idempotencyKey: $"company.create:{command.Name.Trim()}",
             now);
 
         var outcome = await _gateway.DispatchAsync(
@@ -110,9 +100,7 @@ public sealed class CreateCompanyHandler
                 var company = Domain.Companies.Company.Create(
                     companyId,
                     command.Name,
-                    ticker,
                     now,
-                    exchange,
                     command.Sector,
                     command.Industry,
                     command.Country,

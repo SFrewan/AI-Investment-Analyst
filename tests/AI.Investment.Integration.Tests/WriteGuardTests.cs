@@ -87,7 +87,10 @@ public sealed class WriteGuardTests : IAsyncLifetime
         }
 
         await using var verification = _fixture.CreateContext(new ScopedWriteAuthorization());
-        Assert.NotNull(await verification.Companies.FirstOrDefaultAsync(c => c.Ticker == ticker));
+        // Identified by name now: the ticker moved to the security with the D4 narrowing, and this
+        // test is about the write guard rather than about how a company is looked up.
+        Assert.NotNull(await verification.Companies.FirstOrDefaultAsync(
+            c => c.Name == $"Test {ticker.Value}"));
     }
 
     /// <summary>
@@ -399,6 +402,6 @@ public sealed class WriteGuardTests : IAsyncLifetime
             Now);
 
     private static Company NewCompany(Ticker ticker) =>
-        Company.Create(CompanyId.New(), $"Test {ticker.Value}", ticker, Now);
+        Company.Create(CompanyId.New(), $"Test {ticker.Value}", Now);
 
 }

@@ -4,6 +4,7 @@ using AI.Investment.Application.Ingestion;
 using AI.Investment.Domain.Ingestion;
 using AI.Investment.Domain.Sources;
 using AI.Investment.Infrastructure.Configuration;
+using AI.Investment.Infrastructure.Ingestion;
 using Microsoft.Extensions.Options;
 
 namespace AI.Investment.Infrastructure.Ingestion.Providers;
@@ -66,17 +67,35 @@ public sealed class SecEdgarProvider : IDataProvider
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        // Two request shapes, kept apart here rather than merged.
+        // Three request shapes, kept apart here rather than merged.
         //
-        // Every other category names a company and resolves to a CIK path. A market-wide frame
-        // names a PERIOD and has no CIK at all. Routing them through one identifier check would
-        // mean either accepting a period where a company belongs or the reverse, and the failure
-        // would not be visible: a company path built from a period subject returns somebody's
-        // accounts, and it would be archived as a cross-section of the market.
+        // Most categories name a company and resolve to a CIK path. A market-wide frame names a
+        // PERIOD and has no CIK at all. A filing document names one document inside one filing and
+        // needs three parts. Routing them through one identifier check would mean accepting one
+        // where another belongs, and the failure would not be visible: a company path built from a
+        // period subject returns somebody's accounts and would be archived as a cross-section of
+        // the market, and a submissions index archived under a filing-document subject would be
+        // read later as the document it merely lists.
         string path;
         string recordId;
 
-        if (request.Category == DataCategory.MarketWideDisclosure)
+        if (request.Category == DataCategory.RegulatoryFilingDocuments)
+        {
+            var subject = FilingDocumentSubject.Parse(request.Subject.Identifier);
+
+            if (!subject.IsAccepted)
+            {
+                throw new InvalidOperationException(
+                    $"A filing document is identified as 'cik|accessionNumber|primaryDocument', and " +
+                    $"'{request.Subject}' was refused as {subject.Refusal}. Every refusal names a " +
+                    "boundary the identifier crossed; none of them is a badly typed name that could " +
+                    "be corrected here.");
+            }
+
+            path = SecEdgarEndpoints.FilingDocument(subject.Subject!);
+            recordId = subject.Subject!.ToIdentifier();
+        }
+        else if (request.Category == DataCategory.MarketWideDisclosure)
         {
             var frame = SecEdgarEndpoints.ParseFrame(request.Subject.Identifier);
 
@@ -116,7 +135,23 @@ public sealed class SecEdgarProvider : IDataProvider
             recordId = $"CIK{cik}";
         }
 
-        using var message = new HttpRequestMessage(HttpMethod.Get, path);
+        // Filing documents live on a different EDGAR host from the JSON API, so this one category
+        // is addressed absolutely and every other keeps resolving relatively against the client's
+        // BaseAddress.
+        //
+        // An absolute request URI takes precedence over HttpClient.BaseAddress, which is what lets
+        // one registered client reach both hosts without a second registration - same handler,
+        // same timeout, same automatic decompression, same fair-access identity, same declared
+        // quota, and the same rate limiter the gateway applies per source. The archive host is a
+        // transport endpoint, not a second source: everything fetched from either is recorded
+        // under sec-edgar.
+        var isDocument = request.Category == DataCategory.RegulatoryFilingDocuments;
+
+        var requestUri = isDocument
+            ? new Uri(new Uri(_options.ArchiveBaseAddress, UriKind.Absolute), path)
+            : new Uri(path, UriKind.Relative);
+
+        using var message = new HttpRequestMessage(HttpMethod.Get, requestUri);
 
         // Required by the SEC's fair-access policy. Set per request rather than once on the
         // client so it cannot be silently lost by a client reconfigured elsewhere.
@@ -134,7 +169,13 @@ public sealed class SecEdgarProvider : IDataProvider
         // decompression, which adds the header itself and, unlike a hand-written one, also unwraps
         // the response. Setting it by hand asks for gzip that nothing decompresses.
 
-        message.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        // What this endpoint actually returns. The JSON API is asked for JSON; a filing document
+        // is HTML, XML or text, and asking that endpoint for JSON was part of the same mistake as
+        // asking the wrong host - a request shaped for an API pointed at a document tree. Both
+        // headers are per-category and neither changes what any other category sends.
+        message.Headers.Accept.Add(isDocument
+            ? new MediaTypeWithQualityHeaderValue("*/*")
+            : new MediaTypeWithQualityHeaderValue("application/json"));
 
         using var response = await _httpClient
             .SendAsync(message, HttpCompletionOption.ResponseContentRead, cancellationToken)
@@ -142,11 +183,65 @@ public sealed class SecEdgarProvider : IDataProvider
 
         // Throws on any non-success status. An empty response and a failed request mean opposite
         // things to a ledger, and conflating them turns a failure into a silent gap.
-        response.EnsureSuccessStatusCode();
+        //
+        // Wrapped so the status survives. EnsureSuccessStatusCode throws a bare
+        // HttpRequestException; IngestionGateway.Describe records type names only, so the status
+        // was reaching the ledger as "HttpRequestException during ingestion." and nothing more -
+        // which is how five failed document fetches said only that something HTTP-shaped had gone
+        // wrong. ProviderTransportException carries a closed-set token built from framework
+        // enumerations, so the ledger gets "[status:404]" instead, and it derives from
+        // HttpRequestException so every existing handler still catches it. This is the treatment
+        // EodhdProvider already gives its transport failures; nothing new is introduced.
+        if (!response.IsSuccessStatusCode)
+        {
+            HttpRequestException inner;
+
+            try
+            {
+                response.EnsureSuccessStatusCode();
+
+                throw new InvalidOperationException(
+                    "EnsureSuccessStatusCode did not throw on a non-success response.");
+            }
+            catch (HttpRequestException thrown)
+            {
+                inner = thrown;
+            }
+
+            throw new ProviderTransportException(
+                $"EDGAR answered {(int)response.StatusCode} for {request.Category} " +
+                $"'{recordId}'. The status is carried as a closed-set token; nothing the service " +
+                "wrote is recorded.",
+                inner,
+                ProviderTransportException.Classify(inner));
+        }
 
         var payload = await response.Content
             .ReadAsByteArrayAsync(cancellationToken)
             .ConfigureAwait(false);
+
+        // A filing document with a successful status and no bytes is not a document, and for THIS
+        // category only it is a failure rather than an empty answer.
+        //
+        // The distinction is about what the category means, not about being careful. For a price or
+        // splits feed an empty body legitimately says "nothing in this window" and the archive
+        // should hold exactly that. A filing document is one named document inside one accession the
+        // issuer has already filed: it either has content or the request was wrong, and zero bytes
+        // is never its content. Archiving it would leave a payload shaped exactly like a document
+        // that was read and found to state no symbol, which is the inference F2 and F3 forbid - a
+        // delivery failure becoming evidence of absence.
+        //
+        // Raised before the archive is touched, so nothing is stored and the run is recorded as
+        // failed. The gateway's general success rule is untouched: no other category and no other
+        // connector changes behaviour because of this.
+        if (request.Category == DataCategory.RegulatoryFilingDocuments && payload.Length == 0)
+        {
+            throw new EmptyFilingDocumentException(
+                $"EDGAR returned {(int)response.StatusCode} with an empty body for filing document " +
+                $"'{recordId}'. A filing document has content or it has not been retrieved; a " +
+                "zero-byte payload is not archived, because an empty document is indistinguishable " +
+                "from one that was read and found to say nothing.");
+        }
 
         return ProviderResponse.Create(
             payload,
@@ -182,6 +277,13 @@ public sealed class SecEdgarProvider : IDataProvider
                 DataCategory.FinancialStatements,
                 DataCategory.EarningsDisclosure,
                 DataCategory.MarketWideDisclosure,
+
+                // Declared as of F4b so the connector can be exercised end to end against a fake
+                // transport. Declaring a capability is NOT permission to use it: the registered
+                // sec-edgar source does not list this category, so SourceAdmission refuses every
+                // filing-document request before the gateway ever reaches a connector. Two gates,
+                // and this opens only the one that says "this connector knows how".
+                DataCategory.RegulatoryFilingDocuments,
             ],
             [Region.UnitedStates],
 
@@ -190,7 +292,7 @@ public sealed class SecEdgarProvider : IDataProvider
             // company subject with a market-wide category. The connector refuses that pairing on
             // the way out, which is where the knowledge of which endpoint takes which subject
             // actually lives.
-            ["Company", SecEdgarEndpoints.PeriodSubjectKind],
+            ["Company", SecEdgarEndpoints.PeriodSubjectKind, FilingDocumentSubject.SubjectKind],
             supportsWindow: false,
             maxWindowDuration: null,
             quota: ProviderQuota.PerSecond(requestsPerSecond));

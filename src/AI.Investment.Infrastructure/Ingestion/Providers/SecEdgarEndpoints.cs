@@ -23,6 +23,31 @@ internal static class SecEdgarEndpoints
     /// <summary>Every XBRL fact the company has reported.</summary>
     public static string CompanyFacts(string cik) => $"api/xbrl/companyfacts/CIK{cik}.json";
 
+    /// <summary>
+    /// One filing document, as filed.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// EDGAR stores a filing's documents under
+    /// <c>Archives/edgar/data/{cik}/{accession-without-dashes}/{document}</c>, where the CIK carries
+    /// no leading zeros and the accession carries no dashes. Both transformations are applied from
+    /// the subject rather than expected of a caller, so a target is derived from the held pointer
+    /// and cannot be typed differently by two callers.
+    /// </para>
+    /// <para>
+    /// <strong>Every segment is already bounded.</strong> The subject refuses a CIK that is not ten
+    /// digits, an accession that is not EDGAR's dashed form, and a document name carrying a slash,
+    /// a dot-segment or anything outside a filename's alphabet - so nothing reaching this method can
+    /// climb out of the path it is given.
+    /// </para>
+    /// </remarks>
+    public static string FilingDocument(FilingDocumentSubject subject)
+    {
+        ArgumentNullException.ThrowIfNull(subject);
+
+        return $"Archives/edgar/data/{subject.CikPathSegment}/{subject.AccessionPathSegment}/{subject.PrimaryDocument}";
+    }
+
     /// <summary>The subject kind a cross-sectional frame is about: a period, not a company.</summary>
     public const string PeriodSubjectKind = "Period";
 
@@ -153,6 +178,12 @@ internal static class SecEdgarEndpoints
         DataCategory.CompanyProfile => Submissions(cik),
         DataCategory.EarningsDisclosure => Submissions(cik),
         DataCategory.FinancialStatements => CompanyFacts(cik),
+
+        // Deliberately null, and deliberately listed. A filing document is not addressed by CIK
+        // alone - it needs the accession and the document name too - so it is served by
+        // FilingDocument(subject) rather than from here. Falling through to a company endpoint
+        // would answer with the submissions index and label it a filing document.
+        DataCategory.RegulatoryFilingDocuments => null,
 
         // Deliberately null, and deliberately listed rather than left to the wildcard: a
         // market-wide frame is about a period and has no CIK to put in a path. Falling through to

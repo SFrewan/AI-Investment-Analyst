@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using AI.Investment.Application.Abstractions;
+using AI.Investment.Domain.Coverage;
 using AI.Investment.Domain.Ingestion;
 using AI.Investment.Infrastructure.Configuration;
 using AI.Investment.Infrastructure.Persistence;

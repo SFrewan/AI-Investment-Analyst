@@ -6,6 +6,7 @@ using System.Text.Json;
 using AI.Investment.Application.Abstractions;
 using AI.Investment.Domain.Analytics.Financial;
 using AI.Investment.Domain.Common;
+using AI.Investment.Domain.Coverage;
 using AI.Investment.Domain.Enums;
 using AI.Investment.Domain.Ingestion;
 using AI.Investment.Domain.Sources;
@@ -416,7 +417,7 @@ public sealed class AcquisitionAuthorizationTests : IClassFixture<UniverseApiFac
             var verdict = CoverageEvaluation.Evaluate(
                 member.Ready,
                 sessions,
-                Later(DateOnly.FromDateTime(WindowStart), member.SpanFrom),
+                member.SpanFrom,
                 member.SpanTo,
                 wasRequested: symbol is not null && requested.Contains(symbol));
 
@@ -562,8 +563,6 @@ public sealed class AcquisitionAuthorizationTests : IClassFixture<UniverseApiFac
     private static bool WellFormedTicker(string ticker) =>
         ticker.Length is > 0 and <= 5 && ticker.All(char.IsAsciiLetterUpper);
 
-    private static DateOnly Later(DateOnly a, DateOnly b) => a > b ? a : b;
-
     // ---- reading -------------------------------------------------------------------------------------
 
     private static async Task<List<Member>> MembersAsync()
@@ -606,13 +605,11 @@ public sealed class AcquisitionAuthorizationTests : IClassFixture<UniverseApiFac
                 var survives = list.Count > 0 &&
                     string.Equals(list[^1], finalCut, StringComparison.Ordinal);
 
-                var spanFrom = list.Count == 0
-                    ? windowFrom
-                    : DateOnly.Parse(list[0], CultureInfo.InvariantCulture);
-
-                var spanTo = list.Count == 0 || survives
-                    ? windowTo
-                    : DateOnly.Parse(list[^1], CultureInfo.InvariantCulture);
+                var (spanFrom, spanTo) = MembershipSpan.Derive(
+                    [.. list.Select(d => DateOnly.Parse(d, CultureInfo.InvariantCulture))],
+                    DateOnly.Parse(finalCut, CultureInfo.InvariantCulture),
+                    windowFrom,
+                    windowTo);
 
                 return new Member(
                     cik,
@@ -627,7 +624,7 @@ public sealed class AcquisitionAuthorizationTests : IClassFixture<UniverseApiFac
                         : null,
                     survives,
                     spanFrom,
-                    spanTo < windowFrom ? windowFrom : spanTo);
+                    spanTo);
             })
             .ToList();
     }

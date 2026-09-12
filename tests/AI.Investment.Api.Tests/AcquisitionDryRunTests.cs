@@ -5,6 +5,7 @@ using System.Text.Json;
 using AI.Investment.Application.Abstractions;
 using AI.Investment.Domain.Analytics.Financial;
 using AI.Investment.Domain.Common;
+using AI.Investment.Domain.Coverage;
 using AI.Investment.Domain.Ingestion;
 using AI.Investment.Domain.Sources;
 using AI.Investment.Domain.ValueObjects;
@@ -246,7 +247,7 @@ public sealed class AcquisitionDryRunTests : IClassFixture<UniverseApiFactory>
                 ? dates
                 : [];
 
-            var (from, to) = Span(member);
+            var (from, to) = (member.SpanFrom, member.SpanTo);
 
             coverage.Add(new Coverage(
                 member,
@@ -376,6 +377,9 @@ public sealed class AcquisitionDryRunTests : IClassFixture<UniverseApiFactory>
                     .ToList(),
                 StringComparer.Ordinal);
 
+        var windowFrom = DateOnly.FromDateTime(WindowStart);
+        var windowTo = DateOnly.FromDateTime(WindowEnd);
+
         return identity.RootElement
             .GetProperty("Members")
             .EnumerateArray()
@@ -383,6 +387,12 @@ public sealed class AcquisitionDryRunTests : IClassFixture<UniverseApiFactory>
             {
                 var cik = m.GetProperty("Cik").GetString() ?? string.Empty;
                 List<string> list = cohorts.TryGetValue(cik, out var c) ? c : [];
+
+                var (spanFrom, spanTo) = MembershipSpan.Derive(
+                    [.. list.Select(d => DateOnly.Parse(d, CultureInfo.InvariantCulture))],
+                    DateOnly.Parse(finalCut, CultureInfo.InvariantCulture),
+                    windowFrom,
+                    windowTo);
 
                 return new Member(
                     cik,
@@ -392,33 +402,12 @@ public sealed class AcquisitionDryRunTests : IClassFixture<UniverseApiFactory>
                         ? t.GetString()
                         : null,
                     m.GetProperty("Status").GetString() ?? "unknown",
-                    list.Count == 0 ? null : list[0],
-                    list.Count == 0 ? null : list[^1],
+                    spanFrom,
+                    spanTo,
                     list.Count > 0 && string.Equals(list[^1], finalCut, StringComparison.Ordinal));
             })
             .ToList();
     }
-
-    /// <summary>A member's own membership span, clipped to the sealed window.</summary>
-    private static (DateOnly From, DateOnly To) Span(Member member)
-    {
-        var windowFrom = DateOnly.FromDateTime(WindowStart);
-        var windowTo = DateOnly.FromDateTime(WindowEnd);
-
-        var from = member.FirstCohort is null
-            ? windowFrom
-            : Later(windowFrom, DateOnly.Parse(member.FirstCohort, CultureInfo.InvariantCulture));
-
-        var to = member.LastCohort is null || member.SurvivesToWindowEnd
-            ? windowTo
-            : Earlier(windowTo, DateOnly.Parse(member.LastCohort, CultureInfo.InvariantCulture));
-
-        return (from, to < from ? from : to);
-    }
-
-    private static DateOnly Later(DateOnly a, DateOnly b) => a > b ? a : b;
-
-    private static DateOnly Earlier(DateOnly a, DateOnly b) => a < b ? a : b;
 
     private static async Task<Dictionary<string, List<DateOnly>>> SessionsAsync(AppDbContext context)
     {
@@ -689,8 +678,8 @@ public sealed class AcquisitionDryRunTests : IClassFixture<UniverseApiFactory>
         bool Ready,
         string? Ticker,
         string Status,
-        string? FirstCohort,
-        string? LastCohort,
+        DateOnly SpanFrom,
+        DateOnly SpanTo,
         bool SurvivesToWindowEnd);
 
     private sealed record Planned(
@@ -705,7 +694,7 @@ public sealed class AcquisitionDryRunTests : IClassFixture<UniverseApiFactory>
     private sealed record Coverage(
         Member Member,
         string? Symbol,
-        CoverageEvaluation.Verdict Verdict);
+        CoverageVerdict Verdict);
 
     private sealed record Cadence(int Companies, int CompanyYears, decimal Mean);
 

@@ -20,8 +20,9 @@ namespace AI.Investment.Api.Tests;
 /// it makes one request and returns one document. Everything here happens afterwards, over that
 /// document, and needs no connector, no network and no store. So the rule is a function from
 /// (window start, the dates the document carries) to a verdict, and it lives beside
-/// <see cref="CoverageEvaluation"/> and <c>ObservationDeduplication</c> for the same reason those
-/// do: a decision worth making is worth making somewhere it can be tested without a provider.
+/// <see cref="AI.Investment.Domain.Coverage.CoverageEvaluation"/> and
+/// <c>ObservationDeduplication</c> for the same reason those do: a decision worth making is worth
+/// making somewhere it can be tested without a provider.
 /// </para>
 /// <para>
 /// <strong>What it deliberately does not do.</strong> It follows no reference, issues no second

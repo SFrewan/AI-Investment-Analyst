@@ -1,0 +1,334 @@
+{
+  "Schema": "filing-document-pilot-declaration@1",
+  "DeclarationId": "sec-edgar-filing-document-pilot-2026-09",
+  "Status": "DECLARATION ONLY - NOT AUTHORIZATION. NO ACQUISITION IS AUTHORISED.",
+  "StatusNote": "This file states exactly which filing documents a future authorisation could cover, and nothing more. It grants no permission, consumes no authorisation, and cannot cause a request. Dispatch additionally requires: the sec-edgar registry row to declare RegulatoryFilingDocuments (it does not), a sealed acquisition-authorization@1 with a dispatch ceiling (none exists), and a deliberate operator act. Each is a separate decision and none is performed here.",
+  "Purpose": "Answer one question: can the existing SEC filing-document acquisition path retrieve a small, deterministic sample of actual filing documents that a later stage could inspect for issuer-stated historical identity? It does not assume the documents contain a symbol change, does not assert that a filing establishes ValidFrom or ValidTo, and creates no historical ticker evidence.",
+  "Source": "sec-edgar",
+  "SourceNote": "The registered data source. Not the vendor label \"eodhd\", which names no registered source, and not eodhd-splits, which is corporate-action provenance for a different feed entirely.",
+  "DataCategory": "RegulatoryFilingDocuments",
+  "DataCategoryNote": "Distinct from RegulatoryFilings, which serves the submissions index. That category names documents; this one is the documents.",
+  "EvidenceBaseFingerprint": "us-pit-sample400-2021-09-to-2026-08@f78cfe45b962",
+  "IdentityDeclaration": "declarations/security-identity-sample400-2021-2026-v2.json",
+  "IdentityDeclarationDigest": "86c610e2de640f8f759f3cc5cb78489027c9f5605ee404b0ed18e9a84eb9fd28",
+  "SelectionInput": "observations where attribute LIKE 'filing.%', keyed by (subject_identifier, source_record_id), restricted to form 8-K and the six member CIKs",
+  "SelectionInputFingerprint": "ce296f15669d13d7c3a1058da3914735d3a08854ba6ff060afeffc5721a20fb0",
+  "SelectionInputPointerCount": 546,
+  "SelectionRule": "For each member CIK, order its eligible 8-K filing pointers by FilingDate DESCENDING, tie-broken by AccessionNumber DESCENDING, and take the first 5. Most-recent-first because these six are deregistered issuers whose identity events - renames, mergers, delistings - cluster at the end of their filing history; it is a sampling rule chosen for the pilot, not a claim that these documents contain identity evidence.",
+  "SelectionRuleTotality": "Proven against the held data before sealing: no member has two 8-K pointers sharing a (FilingDate, AccessionNumber) pair, and accession numbers are globally unique across all 546. The ordering is therefore total and the selection has no tie to break arbitrarily.",
+  "SelectionRuleDeviation": "F3 proposed \"the five 8-K filings nearest in time to each member's known symbol discontinuity\". That rule is not reproducible from held evidence: F2 established that no held source dates a symbol change for any member, so no discontinuity date exists to be near. Most-recent-first is used instead, and the deviation is recorded rather than silently substituted.",
+  "EligibilityRule": "A pointer is eligible only if it carries a ten-digit CIK, an accession number in EDGAR's dashed form, a non-empty primary document that is addressable by FilingDocumentSubject (no path separator, no dot-segment, no query or fragment character), a filing form of exactly 8-K, and an ISO filing date. A pointer failing any of these is excluded and is never replaced by a pointer of another form.",
+  "PlannedRequests": 30,
+  "DispatchCeiling": 30,
+  "PerMemberCeiling": 5,
+  "NoAutomaticExpansion": "The Targets list is the whole scope. There is no wildcard, no pattern, no query predicate and no provider-side discovery. A document referencing another grants no authority to fetch it.",
+  "MemberScope": [
+    {
+      "Cik": "0000892482",
+      "Label": "QUMU",
+      "EligibleEightKPointers": 199,
+      "Selected": 5,
+      "SelectedFilingDateRange": [
+        "2022-10-28",
+        "2023-02-08"
+      ]
+    },
+    {
+      "Cik": "0001335112",
+      "Label": "LGIQ",
+      "EligibleEightKPointers": 170,
+      "Selected": 5,
+      "SelectedFilingDateRange": [
+        "2023-11-03",
+        "2025-12-09"
+      ]
+    },
+    {
+      "Cik": "0001404123",
+      "Label": "ONEM",
+      "EligibleEightKPointers": 34,
+      "Selected": 5,
+      "SelectedFilingDateRange": [
+        "2022-09-23",
+        "2023-02-22"
+      ]
+    },
+    {
+      "Cik": "0001426332",
+      "Label": "NGM",
+      "EligibleEightKPointers": 51,
+      "Selected": 5,
+      "SelectedFilingDateRange": [
+        "2024-01-02",
+        "2024-04-05"
+      ]
+    },
+    {
+      "Cik": "0001775625",
+      "Label": "SDC",
+      "EligibleEightKPointers": 48,
+      "Selected": 5,
+      "SelectedFilingDateRange": [
+        "2023-07-05",
+        "2023-10-02"
+      ]
+    },
+    {
+      "Cik": "0001784851",
+      "Label": "SHPW",
+      "EligibleEightKPointers": 44,
+      "Selected": 5,
+      "SelectedFilingDateRange": [
+        "2024-03-28",
+        "2024-07-03"
+      ]
+    }
+  ],
+  "TargetIdentity": "Every target is identified by CIK + AccessionNumber + PrimaryDocument. No URL, ticker, company name, filename alone or accession alone is an identity. SubjectIdentifier is the exact string FilingDocumentSubject.Parse accepts; the archive path is derived from it inside the connector and is not stated here.",
+  "EmptyPayloadRule": "A zero-byte response is not a document and must never be read as evidence that a filing states no symbol. Recorded because the existing gateway currently treats an empty HTTP 200 as a successful acquisition (F4b finding 2); the stage that interprets these documents must refuse a zero-byte payload rather than interpret it.",
+  "ChangedDocumentRule": "A re-fetch of an already-archived target is suppressed by the idempotency ledger before its bytes are compared (F4b finding 1), so a document that changed between fetches is not detected. Nothing is overwritten and no evidence is lost. Change detection is an implementation blocker for the dispatch stage and is not addressed by this declaration.",
+  "Targets": [
+    {
+      "Cik": "0000892482",
+      "AccessionNumber": "0001493152-23-003970",
+      "PrimaryDocument": "form8-k.htm",
+      "Form": "8-K",
+      "FilingDate": "2023-02-08",
+      "SubjectIdentifier": "0000892482|0001493152-23-003970|form8-k.htm"
+    },
+    {
+      "Cik": "0000892482",
+      "AccessionNumber": "0001493152-23-002992",
+      "PrimaryDocument": "form8-k.htm",
+      "Form": "8-K",
+      "FilingDate": "2023-01-30",
+      "SubjectIdentifier": "0000892482|0001493152-23-002992|form8-k.htm"
+    },
+    {
+      "Cik": "0000892482",
+      "AccessionNumber": "0001493152-23-002750",
+      "PrimaryDocument": "form8-k.htm",
+      "Form": "8-K",
+      "FilingDate": "2023-01-27",
+      "SubjectIdentifier": "0000892482|0001493152-23-002750|form8-k.htm"
+    },
+    {
+      "Cik": "0000892482",
+      "AccessionNumber": "0001493152-22-035853",
+      "PrimaryDocument": "form8-k.htm",
+      "Form": "8-K",
+      "FilingDate": "2022-12-19",
+      "SubjectIdentifier": "0000892482|0001493152-22-035853|form8-k.htm"
+    },
+    {
+      "Cik": "0000892482",
+      "AccessionNumber": "0000892482-22-000086",
+      "PrimaryDocument": "qumu-20221027.htm",
+      "Form": "8-K",
+      "FilingDate": "2022-10-28",
+      "SubjectIdentifier": "0000892482|0000892482-22-000086|qumu-20221027.htm"
+    },
+    {
+      "Cik": "0001335112",
+      "AccessionNumber": "0001520138-25-000377",
+      "PrimaryDocument": "lgiq-20251208_8k.htm",
+      "Form": "8-K",
+      "FilingDate": "2025-12-09",
+      "SubjectIdentifier": "0001335112|0001520138-25-000377|lgiq-20251208_8k.htm"
+    },
+    {
+      "Cik": "0001335112",
+      "AccessionNumber": "0001213900-24-094743",
+      "PrimaryDocument": "ea0220166-8k_logiq.htm",
+      "Form": "8-K",
+      "FilingDate": "2024-11-06",
+      "SubjectIdentifier": "0001335112|0001213900-24-094743|ea0220166-8k_logiq.htm"
+    },
+    {
+      "Cik": "0001335112",
+      "AccessionNumber": "0001575872-24-000460",
+      "PrimaryDocument": "lgiq-20240206.htm",
+      "Form": "8-K",
+      "FilingDate": "2024-05-01",
+      "SubjectIdentifier": "0001335112|0001575872-24-000460|lgiq-20240206.htm"
+    },
+    {
+      "Cik": "0001335112",
+      "AccessionNumber": "0001575872-24-000030",
+      "PrimaryDocument": "lgiq-20240104.htm",
+      "Form": "8-K",
+      "FilingDate": "2024-01-09",
+      "SubjectIdentifier": "0001335112|0001575872-24-000030|lgiq-20240104.htm"
+    },
+    {
+      "Cik": "0001335112",
+      "AccessionNumber": "0001575872-23-001693",
+      "PrimaryDocument": "lgiq-20231102.htm",
+      "Form": "8-K",
+      "FilingDate": "2023-11-03",
+      "SubjectIdentifier": "0001335112|0001575872-23-001693|lgiq-20231102.htm"
+    },
+    {
+      "Cik": "0001404123",
+      "AccessionNumber": "0001404123-23-000015",
+      "PrimaryDocument": "onem-20230221.htm",
+      "Form": "8-K",
+      "FilingDate": "2023-02-22",
+      "SubjectIdentifier": "0001404123|0001404123-23-000015|onem-20230221.htm"
+    },
+    {
+      "Cik": "0001404123",
+      "AccessionNumber": "0001193125-23-044883",
+      "PrimaryDocument": "d468299d8k.htm",
+      "Form": "8-K",
+      "FilingDate": "2023-02-22",
+      "SubjectIdentifier": "0001404123|0001193125-23-044883|d468299d8k.htm"
+    },
+    {
+      "Cik": "0001404123",
+      "AccessionNumber": "0001404123-22-000079",
+      "PrimaryDocument": "onem-20221114.htm",
+      "Form": "8-K",
+      "FilingDate": "2022-11-15",
+      "SubjectIdentifier": "0001404123|0001404123-22-000079|onem-20221114.htm"
+    },
+    {
+      "Cik": "0001404123",
+      "AccessionNumber": "0001404123-22-000075",
+      "PrimaryDocument": "onem-20221102.htm",
+      "Form": "8-K",
+      "FilingDate": "2022-11-02",
+      "SubjectIdentifier": "0001404123|0001404123-22-000075|onem-20221102.htm"
+    },
+    {
+      "Cik": "0001404123",
+      "AccessionNumber": "0001404123-22-000070",
+      "PrimaryDocument": "onem-20220922.htm",
+      "Form": "8-K",
+      "FilingDate": "2022-09-23",
+      "SubjectIdentifier": "0001404123|0001404123-22-000070|onem-20220922.htm"
+    },
+    {
+      "Cik": "0001426332",
+      "AccessionNumber": "0001193125-24-088076",
+      "PrimaryDocument": "d813269d8k.htm",
+      "Form": "8-K",
+      "FilingDate": "2024-04-05",
+      "SubjectIdentifier": "0001426332|0001193125-24-088076|d813269d8k.htm"
+    },
+    {
+      "Cik": "0001426332",
+      "AccessionNumber": "0001628280-24-010229",
+      "PrimaryDocument": "ngm-20240311.htm",
+      "Form": "8-K",
+      "FilingDate": "2024-03-11",
+      "SubjectIdentifier": "0001426332|0001628280-24-010229|ngm-20240311.htm"
+    },
+    {
+      "Cik": "0001426332",
+      "AccessionNumber": "0001193125-24-046296",
+      "PrimaryDocument": "d796872d8k.htm",
+      "Form": "8-K",
+      "FilingDate": "2024-02-26",
+      "SubjectIdentifier": "0001426332|0001193125-24-046296|d796872d8k.htm"
+    },
+    {
+      "Cik": "0001426332",
+      "AccessionNumber": "0001193125-24-011619",
+      "PrimaryDocument": "d736294d8k.htm",
+      "Form": "8-K",
+      "FilingDate": "2024-01-22",
+      "SubjectIdentifier": "0001426332|0001193125-24-011619|d736294d8k.htm"
+    },
+    {
+      "Cik": "0001426332",
+      "AccessionNumber": "0001193125-24-000219",
+      "PrimaryDocument": "d680834d8k.htm",
+      "Form": "8-K",
+      "FilingDate": "2024-01-02",
+      "SubjectIdentifier": "0001426332|0001193125-24-000219|d680834d8k.htm"
+    },
+    {
+      "Cik": "0001775625",
+      "AccessionNumber": "0001775625-23-000112",
+      "PrimaryDocument": "sdc-20230929.htm",
+      "Form": "8-K",
+      "FilingDate": "2023-10-02",
+      "SubjectIdentifier": "0001775625|0001775625-23-000112|sdc-20230929.htm"
+    },
+    {
+      "Cik": "0001775625",
+      "AccessionNumber": "0001775625-23-000109",
+      "PrimaryDocument": "sdc-20230925.htm",
+      "Form": "8-K",
+      "FilingDate": "2023-10-02",
+      "SubjectIdentifier": "0001775625|0001775625-23-000109|sdc-20230925.htm"
+    },
+    {
+      "Cik": "0001775625",
+      "AccessionNumber": "0001775625-23-000104",
+      "PrimaryDocument": "sdc-20230824.htm",
+      "Form": "8-K",
+      "FilingDate": "2023-08-24",
+      "SubjectIdentifier": "0001775625|0001775625-23-000104|sdc-20230824.htm"
+    },
+    {
+      "Cik": "0001775625",
+      "AccessionNumber": "0001775625-23-000097",
+      "PrimaryDocument": "sdc-20230808.htm",
+      "Form": "8-K",
+      "FilingDate": "2023-08-08",
+      "SubjectIdentifier": "0001775625|0001775625-23-000097|sdc-20230808.htm"
+    },
+    {
+      "Cik": "0001775625",
+      "AccessionNumber": "0001775625-23-000089",
+      "PrimaryDocument": "sdc-20230705.htm",
+      "Form": "8-K",
+      "FilingDate": "2023-07-05",
+      "SubjectIdentifier": "0001775625|0001775625-23-000089|sdc-20230705.htm"
+    },
+    {
+      "Cik": "0001784851",
+      "AccessionNumber": "0001628280-24-030980",
+      "PrimaryDocument": "shpw-20240702.htm",
+      "Form": "8-K",
+      "FilingDate": "2024-07-03",
+      "SubjectIdentifier": "0001784851|0001628280-24-030980|shpw-20240702.htm"
+    },
+    {
+      "Cik": "0001784851",
+      "AccessionNumber": "0001628280-24-028284",
+      "PrimaryDocument": "shpw-20240610.htm",
+      "Form": "8-K",
+      "FilingDate": "2024-06-14",
+      "SubjectIdentifier": "0001784851|0001628280-24-028284|shpw-20240610.htm"
+    },
+    {
+      "Cik": "0001784851",
+      "AccessionNumber": "0001628280-24-025193",
+      "PrimaryDocument": "shpw-20240522.htm",
+      "Form": "8-K",
+      "FilingDate": "2024-05-24",
+      "SubjectIdentifier": "0001784851|0001628280-24-025193|shpw-20240522.htm"
+    },
+    {
+      "Cik": "0001784851",
+      "AccessionNumber": "0001628280-24-020860",
+      "PrimaryDocument": "shpw-20240507.htm",
+      "Form": "8-K",
+      "FilingDate": "2024-05-07",
+      "SubjectIdentifier": "0001784851|0001628280-24-020860|shpw-20240507.htm"
+    },
+    {
+      "Cik": "0001784851",
+      "AccessionNumber": "0001628280-24-013627",
+      "PrimaryDocument": "shpw-20240328.htm",
+      "Form": "8-K",
+      "FilingDate": "2024-03-28",
+      "SubjectIdentifier": "0001784851|0001628280-24-013627|shpw-20240328.htm"
+    }
+  ],
+  "DigestRule": "SHA-256, lower-case hex, over the newline-joined canonical form: schema, declaration id, source, data category, evidence base fingerprint, selection input fingerprint, planned requests, then for each target in file order the fields Cik, AccessionNumber, PrimaryDocument, Form, FilingDate. Prose and status fields are excluded, so clarifying a note does not invalidate the seal while any change to the pilot scope does.",
+  "PilotDigest": "c785f4ee4344cbcf9ec9b31c8ddb78ebabbb152a6504522a668169b6590bdb32"
+}

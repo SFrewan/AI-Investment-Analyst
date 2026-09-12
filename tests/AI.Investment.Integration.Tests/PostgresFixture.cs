@@ -95,10 +95,13 @@ public sealed class PostgresFixture : IAsyncLifetime
             "public"."autonomy_grants",
             "public"."companies",
             "public"."data_sources",
+            "public"."determinations",
             "public"."escalations",
             "public"."ingestion_runs",
             "public"."kill_switch",
             "public"."ledger_entries",
+            "public"."listing_events",
+            "public"."listings",
             "public"."live_venue_authorizations",
             "public"."observations",
             "public"."operating_cycles",
@@ -109,8 +112,13 @@ public sealed class PostgresFixture : IAsyncLifetime
             "public"."promotion_warrants",
             "public"."provider_exchanges",
             "public"."quarantined_payloads",
+            "public"."securities",
+            "public"."security_identifiers",
             "public"."shadow_decisions",
             "public"."unreplayable_evidence",
+            "public"."universe_memberships",
+            "public"."universes",
+            "public"."venues",
             "public"."watches"
         RESTART IDENTITY CASCADE;
         """;

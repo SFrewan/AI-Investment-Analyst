@@ -44,11 +44,6 @@ public static class CreateCompanyValidator
             errors.Add($"Name may not exceed {Company.MaxNameLength} characters.");
         }
 
-        if (string.IsNullOrWhiteSpace(command.Ticker))
-        {
-            errors.Add("Ticker is required.");
-        }
-
         if (command.Description is not null &&
             command.Description.Trim().Length > Company.MaxDescriptionLength)
         {

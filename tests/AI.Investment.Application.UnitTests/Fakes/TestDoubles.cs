@@ -38,11 +38,8 @@ public sealed class InMemoryCompanyRepository : ICompanyRepository
     public Task<Company?> GetByIdAsync(CompanyId id, CancellationToken cancellationToken = default) =>
         Task.FromResult(Companies.FirstOrDefault(c => c.Id == id));
 
-    public Task<Company?> GetByTickerAsync(Ticker ticker, CancellationToken cancellationToken = default) =>
-        Task.FromResult(Companies.FirstOrDefault(c => c.Ticker == ticker));
-
-    public Task<bool> ExistsWithTickerAsync(Ticker ticker, CancellationToken cancellationToken = default) =>
-        Task.FromResult(Companies.Any(c => c.Ticker == ticker));
+    public Task<Company?> FindByCikAsync(Cik cik, CancellationToken cancellationToken = default) =>
+        Task.FromResult(Companies.FirstOrDefault(c => c.Cik == cik));
 
     public Task<IReadOnlyList<Company>> SearchAsync(
         string? query,

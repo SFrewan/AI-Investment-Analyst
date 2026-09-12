@@ -48,6 +48,19 @@ public sealed class SecEdgarSource : ISourceDefinition
                 DataCategory.FinancialStatements,
                 DataCategory.EarningsDisclosure,
                 DataCategory.MarketWideDisclosure,
+
+                // Declared in F6g, the stage that opens admission for it - and deliberately not
+                // before. The category has existed since F4 and the connector has claimed the
+                // capability since F4b, but a definition is what a fresh installation registers
+                // from: declaring it earlier would have brought a new database up with filing
+                // documents already admitted and no operator act at all. F6d added it a stage
+                // early and F6e took it back out for exactly that reason.
+                //
+                // Admitting a category is not authorising a fetch. A filing-document request
+                // still needs a sealed acquisition-authorization@3 naming the exact document, an
+                // approved batch, a disengaged kill switch and an enabled capability. This opens
+                // the gate the other four stand behind.
+                DataCategory.RegulatoryFilingDocuments,
             ],
 
             // Filings arrive when companies file them. A daily cadence would report a source

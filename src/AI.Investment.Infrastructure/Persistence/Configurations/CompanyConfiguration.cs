@@ -33,16 +33,10 @@ public sealed class CompanyConfiguration : IEntityTypeConfiguration<Company>
             .HasMaxLength(Company.MaxNameLength)
             .IsRequired();
 
-        builder.Property(c => c.Ticker)
-            .HasColumnName("ticker")
-            .HasMaxLength(Ticker.MaxLength)
-            .HasConversion(t => t.Value, value => Ticker.Create(value))
-            .IsRequired();
-
-        builder.Property(c => c.Exchange)
-            .HasColumnName("exchange")
-            .HasMaxLength(Exchange.MaxLength)
-            .HasConversion(e => e!.Code, value => Exchange.Create(value));
+        builder.Property(c => c.Cik)
+            .HasColumnName("cik")
+            .HasMaxLength(Cik.Digits)
+            .HasConversion(c => c!.Value, value => Cik.Create(value));
 
         builder.Property(c => c.Sector)
             .HasColumnName("sector")
@@ -63,9 +57,19 @@ public sealed class CompanyConfiguration : IEntityTypeConfiguration<Company>
         builder.Property(c => c.CreatedAtUtc).HasColumnName("created_at_utc").IsRequired();
         builder.Property(c => c.UpdatedAtUtc).HasColumnName("updated_at_utc").IsRequired();
 
-        // One company per ticker. Enforced by the database, not only by the handler's check:
-        // two concurrent creates would both pass an application-level check and both insert.
-        builder.HasIndex(c => c.Ticker).IsUnique().HasDatabaseName("ix_companies_ticker");
         builder.HasIndex(c => c.Name).HasDatabaseName("ix_companies_name");
+
+        // Unique WHEN PRESENT, which is a different constraint from unique.
+        //
+        // A plain unique index would be wrong in PostgreSQL for the opposite of the obvious reason:
+        // it permits many NULLs already, so it would appear to work. The filter is here to say what
+        // is actually meant - at most one company may claim a given SEC filer, and a company with no
+        // SEC identity is ordinary rather than a row awaiting a value. Writing the intent down is
+        // what stops the next person reading the absence of a filter as an oversight and "fixing" it
+        // into a required column.
+        builder.HasIndex(c => c.Cik)
+            .IsUnique()
+            .HasFilter("cik IS NOT NULL")
+            .HasDatabaseName("ix_companies_cik");
     }
 }

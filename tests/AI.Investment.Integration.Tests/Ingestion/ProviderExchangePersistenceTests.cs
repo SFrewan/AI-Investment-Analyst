@@ -590,6 +590,20 @@ public sealed class ProviderExchangePersistenceTests : IAsyncLifetime
 
         public Task<IReadOnlyList<DataSource>> GetAllAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<DataSource>>([_source]);
+
+        /// <summary>
+        /// Staging a registration is not something this double supports.
+        /// </summary>
+        /// <remarks>
+        /// It holds exactly one source, fixed at construction, because these tests are about what
+        /// the gateway READS from the registry on its way to a provenance row. Silently accepting a
+        /// second registration and continuing to serve the first would be the kind of quietly wrong
+        /// double that makes a green test mean nothing, so it says so instead. The gateway never
+        /// calls this; if it ever starts to, this fails loudly rather than lying.
+        /// </remarks>
+        public void Add(DataSource source) =>
+            throw new NotSupportedException(
+                "SingleSourceRegistry serves one fixed source and does not stage registrations.");
     }
 
     private sealed class SingleProviderCatalogue : IProviderCatalogue

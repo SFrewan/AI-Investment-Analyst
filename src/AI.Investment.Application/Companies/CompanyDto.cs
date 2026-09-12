@@ -10,8 +10,6 @@ namespace AI.Investment.Application.Companies;
 public sealed record CompanyDto(
     Guid Id,
     string Name,
-    string Ticker,
-    string? Exchange,
     string? Sector,
     string? Industry,
     string? Country,

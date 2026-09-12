@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using AI.Investment.Application.Abstractions;
 using AI.Investment.Application.Normalization;
+using AI.Investment.Domain.Coverage;
 using AI.Investment.Domain.Observations;
 using AI.Investment.Domain.Opportunities.Equity;
 using AI.Investment.Infrastructure.Normalization;

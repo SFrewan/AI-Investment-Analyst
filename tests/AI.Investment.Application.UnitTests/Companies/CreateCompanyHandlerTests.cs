@@ -21,7 +21,7 @@ public sealed class CreateCompanyHandlerTests
         new(_repository, _unitOfWork, gateway, new FixedCorrelationContext(), new FixedClock(Now));
 
     private static CreateCompanyCommand Command() =>
-        new("Microsoft Corporation", "msft", "XNAS", "Technology", "Software", "US", null);
+        new("Microsoft Corporation", "Technology", "Software", "US", null);
 
     [Fact]
     public async Task A_permitted_creation_persists_the_company()
@@ -32,7 +32,7 @@ public sealed class CreateCompanyHandlerTests
 
         Assert.Equal(CreateCompanyStatus.Created, result.Status);
         Assert.NotNull(result.Company);
-        Assert.Equal("MSFT", result.Company!.Ticker);
+        Assert.Equal("Microsoft Corporation", result.Company!.Name);
         Assert.Single(_repository.Staged);
         Assert.Equal(1, _unitOfWork.SaveCount);
     }
@@ -55,7 +55,7 @@ public sealed class CreateCompanyHandlerTests
         Assert.Equal(ProposerKind.DeterministicService, proposal.ProposedBy.Kind);
         Assert.Equal(RiskTier.Low, proposal.RiskTier);
         Assert.True(proposal.Economics.HasNoFinancialEffect);
-        Assert.Equal("company.create:MSFT", proposal.IdempotencyKey);
+        Assert.Equal("company.create:Microsoft Corporation", proposal.IdempotencyKey);
     }
 
     [Fact]
@@ -95,43 +95,24 @@ public sealed class CreateCompanyHandlerTests
         Assert.Empty(_repository.Staged);
     }
 
-    [Fact]
-    public async Task An_existing_ticker_is_reported_without_reaching_the_gateway()
-    {
-        _repository.Companies.Add(
-            Company.Create(CompanyId.New(), "Microsoft", Ticker.Create("MSFT"), Now));
-
-        var gateway = new StubActionGateway(ActionOutcomeStatus.Executed);
-
-        var result = await Handler(gateway).HandleAsync(Command());
-
-        Assert.Equal(CreateCompanyStatus.AlreadyExists, result.Status);
-        Assert.Null(gateway.LastProposal);
-        Assert.Empty(_repository.Staged);
-    }
+    // The duplicate pre-check was keyed on the ticker and went with it at D4. Company names are
+    // not unique and never were, so there is no equivalent assertion to re-point this to - the
+    // seam's idempotency key is what stops a retry creating a second row, and the test above
+    // asserts that key.
 
     [Theory]
-    [InlineData("", "MSFT")]
-    [InlineData("   ", "MSFT")]
-    [InlineData("Microsoft", "")]
-    public async Task Missing_required_input_fails_validation(string name, string ticker)
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task Missing_required_input_fails_validation(string name)
     {
         var gateway = new StubActionGateway();
 
         await Assert.ThrowsAsync<ValidationFailedException>(() =>
-            Handler(gateway).HandleAsync(new CreateCompanyCommand(name, ticker)));
+            Handler(gateway).HandleAsync(new CreateCompanyCommand(name)));
 
         Assert.Null(gateway.LastProposal);
     }
 
-    [Fact]
-    public async Task A_malformed_ticker_is_rejected_by_the_domain()
-    {
-        var gateway = new StubActionGateway();
-
-        await Assert.ThrowsAsync<DomainValidationException>(() =>
-            Handler(gateway).HandleAsync(new CreateCompanyCommand("Microsoft", "not a ticker")));
-
-        Assert.Null(gateway.LastProposal);
-    }
+    // A malformed ticker can no longer reach this handler: the command does not carry one. Ticker
+    // well-formedness is still asserted, by Ticker's own tests, where the type now lives.
 }

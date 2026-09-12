@@ -66,6 +66,15 @@ public sealed class UniverseApiFactory : WebApplicationFactory<Program>
 
     public static string? Contact => Environment.GetEnvironmentVariable(ContactVariable);
 
+    /// <summary>How this host reads the acquisition doors. Substituted only by tests.</summary>
+    /// <remarks>
+    /// A seam rather than a call to <see cref="Environment"/> so that the archive boundary below
+    /// can be asserted both ways. Arming a door by mutating the process environment mid-run would
+    /// be visible to every other test in the assembly, and xunit runs collections in parallel.
+    /// </remarks>
+    internal Func<string, string?> EnvironmentReader { get; init; } =
+        Environment.GetEnvironmentVariable;
+
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         ArgumentNullException.ThrowIfNull(builder);
@@ -94,6 +103,30 @@ public sealed class UniverseApiFactory : WebApplicationFactory<Program>
                 ["Providers:SecEdgar:MaxRequestsPerSecond"] =
                     RequestsPerSecond.ToString(CultureInfo.InvariantCulture),
             });
+
+            // ---- where an authorised document is kept ------------------------------------
+            //
+            // Ordinarily this host archives where the rest of the assembly does: the isolated
+            // root TestArchiveRoot pins, inside build output, because a test's payloads are
+            // fixtures and fixtures do not belong in the evidence store.
+            //
+            // An armed filing-document door says the opposite. That gate is the operator's
+            // statement that this run is an authorised acquisition, and a document it obtains
+            // costs an acquisition unit and cannot be re-fetched for free. Evidence like that
+            // must not land somewhere a rebuild can remove, so the run opts into the durable
+            // archive - through configuration, so the composition, the seam and the store are
+            // all still exactly the ones the application uses.
+            //
+            // Added last on purpose. The isolation arrives as an environment variable, and an
+            // in-memory source registered after AddEnvironmentVariables is what outranks it.
+            if (SecFilingDocumentBatchDoor.IsOpen(EnvironmentReader))
+            {
+                configuration.AddInMemoryCollection(new Dictionary<string, string?>
+                {
+                    [$"{RawArchiveOptions.SectionName}:{nameof(RawArchiveOptions.RootPath)}"] =
+                        TestArchiveRoot.DurableRootPath,
+                });
+            }
         });
 
         builder.ConfigureTestServices(services =>

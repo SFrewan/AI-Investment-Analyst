@@ -1,3 +1,4 @@
+using AI.Investment.Domain.Coverage;
 using Xunit;
 
 namespace AI.Investment.Api.Tests;

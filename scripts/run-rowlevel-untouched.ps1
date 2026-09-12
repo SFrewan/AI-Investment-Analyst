@@ -53,7 +53,7 @@ Write-Host '--- git diff --stat'
 # everything under it.
 $protected = @(
     @{ Label = 'Gate 6 rule file';                     Path = 'declarations/coverage-gate6.json' },
-    @{ Label = 'Gate 6 evaluator';                     Path = 'tests/AI.Investment.Api.Tests/CoverageEvaluation.cs' },
+    @{ Label = 'Gate 6 evaluator';                     Path = 'src/AI.Investment.Domain/Coverage/CoverageEvaluation.cs' },
     @{ Label = 'SEC acquisition authorisation';        Path = 'declarations/acquisition-sec-edgar-gate6-six-members-2021-09-to-2026-08.json' },
     @{ Label = 'SEC draft declaration';                Path = 'declarations/sec-edgar-gate6-six-members-2021-2026.draft.json' },
     @{ Label = 'EODHD price declarations (sample400)'; Path = 'declarations/acquisition-eodhd-sample400.json' },

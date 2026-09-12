@@ -26,22 +26,14 @@ public sealed class CompaniesEndpointTests : IClassFixture<ApiFactory>
 
         using var response = await client.PostAsJsonAsync(
             new Uri("/api/companies", UriKind.Relative),
-            new CreateCompanyCommand(string.Empty, "MSFT"));
+            new CreateCompanyCommand(string.Empty));
 
         Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
     }
 
-    [Fact]
-    public async Task A_malformed_ticker_is_a_client_error_not_a_server_error()
-    {
-        using var client = _factory.CreateClient();
-
-        using var response = await client.PostAsJsonAsync(
-            new Uri("/api/companies", UriKind.Relative),
-            new CreateCompanyCommand("Microsoft Corporation", "this is not a ticker"));
-
-        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
-    }
+    // The malformed-ticker case is gone with the ticker: D4 moved tradable identity off Company,
+    // so the create command no longer carries one and there is no malformed value to reject here.
+    // Ticker well-formedness is still asserted where the type lives.
 
     [Fact]
     public async Task An_unknown_company_id_is_a_404()

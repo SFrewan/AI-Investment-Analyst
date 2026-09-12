@@ -1,6 +1,13 @@
 using System.Text;
 using AI.Investment.Application.Abstractions;
+using AI.Investment.Application.Actions;
 using AI.Investment.Application.Ingestion;
+
+// StubActionGateway and FixedClock live here, beside the other shared doubles, and are used the
+// same way by ProviderExchangeProvenanceTests in this namespace. Reusing them rather than declaring
+// a second pair: two versions of "a gateway that always executes" would drift, and a drifted double
+// makes a passing test mean less than it appears to.
+using AI.Investment.Application.UnitTests.Fakes;
 using AI.Investment.Domain.Actions;
 using AI.Investment.Domain.Common;
 using AI.Investment.Domain.Ingestion;
@@ -111,7 +118,18 @@ public sealed class IngestionGatewayFailurePathTests
         var run = await harness.Gateway.IngestAsync(Request());
 
         Assert.Equal(IngestionOutcome.Failed, run.Outcome);
-        Assert.Contains("the provider is down", run.Reason, StringComparison.Ordinal);
+
+        // IngestionGateway.Describe records TYPE NAMES ONLY - never a message, never a URL -
+        // because the reason goes into an append-only ledger that cannot be redacted afterwards,
+        // and a provider's exception message is one of the likelier places for a URL with an
+        // embedded key to surface. So the run names the failure by type, and the message must NOT
+        // be there. This assertion originally looked for the message and failed, correctly: it was
+        // asserting the opposite of a deliberate security property.
+        //
+        // `!` because IngestionRun.Reason is declared `string?` and this project builds with
+        // nullable enabled and warnings as errors.
+        Assert.Contains("InvalidOperationException", run.Reason!, StringComparison.Ordinal);
+        Assert.DoesNotContain("the provider is down", run.Reason!, StringComparison.Ordinal);
 
         // Recorded exactly once, by the catch path, because the success path never reached it.
         var recorded = Assert.Single(harness.Runs.Recorded);

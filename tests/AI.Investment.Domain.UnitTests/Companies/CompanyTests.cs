@@ -10,12 +10,12 @@ public sealed class CompanyTests
     private static readonly DateTime Now = new(2026, 8, 24, 12, 0, 0, DateTimeKind.Utc);
 
     private static Company NewCompany() =>
-        Company.Create(CompanyId.New(), "Microsoft Corporation", Ticker.Create("MSFT"), Now);
+        Company.Create(CompanyId.New(), "Microsoft Corporation", Now);
 
     [Fact]
     public void Create_trims_the_name()
     {
-        var company = Company.Create(CompanyId.New(), "  Contoso  ", Ticker.Create("CTS"), Now);
+        var company = Company.Create(CompanyId.New(), "  Contoso  ", Now);
         Assert.Equal("Contoso", company.Name);
     }
 
@@ -25,17 +25,17 @@ public sealed class CompanyTests
     [InlineData(null)]
     public void A_company_cannot_exist_without_a_name(string? name) =>
         Assert.Throws<DomainValidationException>(() =>
-            Company.Create(CompanyId.New(), name!, Ticker.Create("CTS"), Now));
+            Company.Create(CompanyId.New(), name!, Now));
 
     [Fact]
     public void A_name_longer_than_the_limit_is_rejected() =>
         Assert.Throws<DomainValidationException>(() =>
-            Company.Create(CompanyId.New(), new string('x', Company.MaxNameLength + 1), Ticker.Create("CTS"), Now));
+            Company.Create(CompanyId.New(), new string('x', Company.MaxNameLength + 1), Now));
 
     [Fact]
     public void A_non_utc_creation_timestamp_is_rejected() =>
         Assert.Throws<DomainValidationException>(() =>
-            Company.Create(CompanyId.New(), "Contoso", Ticker.Create("CTS"), DateTime.Now));
+            Company.Create(CompanyId.New(), "Contoso", DateTime.Now));
 
     [Fact]
     public void Creation_sets_both_timestamps_to_the_same_instant()
@@ -73,15 +73,22 @@ public sealed class CompanyTests
     public void A_company_cannot_be_modified_before_it_was_created() =>
         Assert.Throws<DomainRuleViolationException>(() => NewCompany().Rename("Contoso", Now.AddHours(-1)));
 
+    /// <summary>
+    /// The narrowing, asserted where the old listing test used to be.
+    /// </summary>
+    /// <remarks>
+    /// This test previously proved that ChangeListing replaced the ticker and exchange. D4 removed
+    /// all three: a ticker is an identifier assertion on a security, an exchange is a venue, and a
+    /// company is the legal entity. What was worth asserting is now their absence.
+    /// </remarks>
     [Fact]
-    public void Changing_the_listing_replaces_ticker_and_exchange()
+    public void A_company_carries_no_tradable_identity()
     {
-        var company = NewCompany();
+        var names = typeof(Company).GetProperties().Select(p => p.Name).ToList();
 
-        company.ChangeListing(Ticker.Create("MSFT"), Exchange.Create("XNAS"), Now.AddDays(1));
-
-        Assert.Equal("MSFT", company.Ticker.Value);
-        Assert.Equal("XNAS", company.Exchange!.Code);
+        Assert.DoesNotContain("Ticker", names);
+        Assert.DoesNotContain("Exchange", names);
+        Assert.Null(typeof(Company).GetMethod("ChangeListing"));
     }
 
     [Fact]
@@ -106,8 +113,8 @@ public sealed class CompanyTests
     public void Identity_is_by_id_not_by_contents()
     {
         var id = CompanyId.New();
-        var first = Company.Create(id, "Contoso", Ticker.Create("CTS"), Now);
-        var second = Company.Create(id, "Completely Different Name", Ticker.Create("XYZ"), Now);
+        var first = Company.Create(id, "Contoso", Now);
+        var second = Company.Create(id, "Completely Different Name", Now);
 
         Assert.Equal(first, second);
     }

@@ -51,7 +51,7 @@ $members = @(
 )
 
 # The tolerance, read from the evaluator rather than restated.
-$evaluatorPath = Join-Path $root 'tests\AI.Investment.Api.Tests\CoverageEvaluation.cs'
+$evaluatorPath = Join-Path $root 'src\AI.Investment.Domain\Coverage\CoverageEvaluation.cs'
 $evaluator = Get-Content $evaluatorPath -Raw
 $m0 = [regex]::Match($evaluator, 'InteriorGapTolerance\s*=\s*(\d+)')
 if (-not $m0.Success) { throw "Could not read InteriorGapTolerance from $evaluatorPath" }

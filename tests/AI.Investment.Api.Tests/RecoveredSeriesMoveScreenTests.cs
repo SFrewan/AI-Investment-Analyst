@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using AI.Investment.Application.Abstractions;
 using AI.Investment.Application.Normalization;
+using AI.Investment.Domain.Coverage;
 using AI.Investment.Domain.Ingestion;
 using AI.Investment.Domain.Observations;
 using AI.Investment.Domain.Opportunities.Equity;
@@ -1102,16 +1103,11 @@ public sealed class RecoveredSeriesMoveScreenTests : IClassFixture<UniverseApiFa
                 var cik = m.GetProperty("Cik").GetString() ?? string.Empty;
                 List<string> list = cohorts.TryGetValue(cik, out var c) ? c : [];
 
-                var survives = list.Count > 0 &&
-                    string.Equals(list[^1], finalCut, StringComparison.Ordinal);
-
-                var spanFrom = list.Count == 0
-                    ? windowFrom
-                    : DateOnly.Parse(list[0], CultureInfo.InvariantCulture);
-
-                var spanTo = list.Count == 0 || survives
-                    ? windowTo
-                    : DateOnly.Parse(list[^1], CultureInfo.InvariantCulture);
+                var (spanFrom, spanTo) = MembershipSpan.Derive(
+                    [.. list.Select(d => DateOnly.Parse(d, CultureInfo.InvariantCulture))],
+                    DateOnly.Parse(finalCut, CultureInfo.InvariantCulture),
+                    windowFrom,
+                    windowTo);
 
                 var ticker = m.TryGetProperty("Ticker", out var t) && t.ValueKind == JsonValueKind.String
                     ? t.GetString()
@@ -1123,8 +1119,8 @@ public sealed class RecoveredSeriesMoveScreenTests : IClassFixture<UniverseApiFa
                     cik,
                     isReady,
                     isReady && ticker is not null ? AcquisitionPlanning.SymbolFor(ticker) : null,
-                    spanFrom < windowFrom ? windowFrom : spanFrom,
-                    spanTo < windowFrom ? windowFrom : spanTo);
+                    spanFrom,
+                    spanTo);
             })
             .ToList();
     }

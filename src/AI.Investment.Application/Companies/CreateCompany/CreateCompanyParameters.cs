@@ -10,15 +10,12 @@ namespace AI.Investment.Application.Companies.CreateCompany;
 /// degenerating into a dictionary of strings. The policy engine never reads this - it decides
 /// from capability, risk tier, economics and proposer alone.
 /// </remarks>
-public sealed record CreateCompanyParameters(string Name, string Ticker, string? Exchange) : IActionParameters
+public sealed record CreateCompanyParameters(string Name) : IActionParameters
 {
     /// <summary>
     /// Audit summary. Contains only the identifying fields; free-text description and
     /// classification are omitted because audit rows are permanent and unredactable, and there
     /// is no benefit to copying arbitrary caller text into them.
     /// </summary>
-    public string Describe() =>
-        Exchange is null
-            ? $"name='{Name}', ticker='{Ticker}'"
-            : $"name='{Name}', ticker='{Ticker}', exchange='{Exchange}'";
+    public string Describe() => $"name='{Name}'";
 }

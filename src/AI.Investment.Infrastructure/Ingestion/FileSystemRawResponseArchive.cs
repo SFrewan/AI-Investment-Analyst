@@ -51,7 +51,7 @@ public sealed class FileSystemRawResponseArchive : IRawResponseArchive
     {
         ArgumentNullException.ThrowIfNull(options);
 
-        _rootPath = Path.GetFullPath(options.Value.RootPath);
+        _rootPath = RawArchiveRoot.Resolve(options.Value.RootPath);
     }
 
     public async Task<ContentHash> StoreAsync(

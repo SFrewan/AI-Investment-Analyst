@@ -21,7 +21,6 @@ public sealed class SearchCompaniesHandlerTests
             _repository.Companies.Add(Company.Create(
                 CompanyId.New(),
                 $"Company {i:0000}",
-                Ticker.Create($"C{i:0000}"),
                 Now));
         }
     }
